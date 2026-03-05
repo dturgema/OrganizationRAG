@@ -1,5 +1,6 @@
 # Local Ingestion Pipeline Configuration
 # This configuration defines vector databases to be created during local deployment
+# Supports multiple document formats: PDF, HTML, DOCX, PPTX
 
 # Llama Stack Configuration
 llamastack:
@@ -20,7 +21,7 @@ pipelines:
     name: "hr-vector-db"
     version: "1.0"
     vector_store_name: "hr-vector-db-v1-0"
-    source: GITHUB  # Options: GITHUB, S3, URL
+    source: GITHUB  # Options: GITHUB, S3, URL (supports PDF, HTML, DOCX, PPTX)
     config:
       url: "https://github.com/rh-ai-quickstart/RAG.git"
       path: "notebooks/hr"

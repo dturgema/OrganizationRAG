@@ -1,0 +1,77 @@
+# Recursive Web Crawling Demo Configuration
+# This configuration demonstrates recursive HTML crawling for comprehensive knowledge extraction
+
+llamastack:
+  base_url: "http://llamastack:8321"
+  
+vector_db:
+  embedding_model: "all-MiniLM-L6-v2"
+  embedding_dimension: 384
+  chunk_size_in_tokens: 512
+
+pipelines:
+  # Demo: Crawl Python Documentation
+  python-docs-crawler:
+    enabled: true
+    name: "python-docs-crawled"
+    version: "1.0"
+    vector_store_name: "python-docs-crawled-v1-0"
+    source: URL
+    config:
+      urls:
+        # Starting point - crawler will discover all tutorial pages
+        - "https://docs.python.org/3/tutorial/"
+      
+      crawl:
+        enabled: true
+        max_depth: 3               # 3 levels deep from tutorial root
+        same_domain_only: true     # Stay on docs.python.org
+        max_pages: 50              # Limit to prevent overwhelming
+        delay: 2.0                 # Be respectful to python.org
+
+  # Demo: Company Wiki Simulation (replace with your URLs)
+  company-wiki-crawler:
+    enabled: false  # Enable and customize for your company
+    name: "company-wiki-crawled"
+    version: "1.0"
+    vector_store_name: "company-wiki-crawled-v1-0"
+    source: URL
+    config:
+      urls:
+        # Replace with your actual company URLs
+        - "https://wiki.yourcompany.com/engineering/"
+        - "https://docs.yourcompany.com/processes/"
+      
+      crawl:
+        enabled: true
+        max_depth: 4               # Deep crawling for internal content
+        same_domain_only: true     # Stay within company domain
+        max_pages: 100             # More pages for comprehensive coverage
+        delay: 0.5                 # Faster for internal sites
+
+  # Demo: Mixed Content (some crawled, some direct)
+  mixed-content-demo:
+    enabled: false  # Enable to test mixed approach
+    name: "mixed-content-demo"
+    version: "1.0"  
+    vector_store_name: "mixed-content-demo-v1-0"
+    source: URL
+    config:
+      urls:
+        # Direct PDF (no crawling)
+        - "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+        # HTML section to crawl
+        - "https://www.w3.org/WAI/tutorials/"
+      
+      crawl:
+        enabled: true
+        max_depth: 2
+        same_domain_only: true
+        max_pages: 20
+        delay: 2.0
+
+# Usage Instructions:
+# 1. Enable the python-docs-crawler pipeline above
+# 2. Run: cd deploy/local && make start
+# 3. Watch logs: podman logs -f rag-ingestion
+# 4. The crawler will discover and process all linked pages from the tutorial root

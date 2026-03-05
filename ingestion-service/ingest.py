@@ -2,6 +2,7 @@
 """
 Local RAG Ingestion Service
 Processes documents from various sources (GitHub, S3, URLs) and stores them in vector databases.
+Supports recursive web crawling for comprehensive HTML content extraction.
 """
 
 import os
@@ -12,8 +13,11 @@ import tempfile
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set
 import logging
+from urllib.parse import urljoin, urlparse
+import requests
+from bs4 import BeautifulSoup
 
 from llama_stack_client import LlamaStackClient
 from llama_stack_client.types import Document as LlamaStackDocument
@@ -33,6 +37,153 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class WebCrawler:
+    """Web crawler for recursive HTML link extraction and processing."""
+    
+    def __init__(self, max_depth: int = 2, same_domain_only: bool = True, 
+                 max_pages: int = 50, delay: float = 1.0):
+        """
+        Initialize the web crawler.
+        
+        Args:
+            max_depth: Maximum crawling depth (default: 2)
+            same_domain_only: Only crawl within the same domain (default: True)
+            max_pages: Maximum number of pages to crawl (default: 50)
+            delay: Delay between requests in seconds (default: 1.0)
+        """
+        self.max_depth = max_depth
+        self.same_domain_only = same_domain_only
+        self.max_pages = max_pages
+        self.delay = delay
+        self.visited_urls: Set[str] = set()
+        self.discovered_urls: List[str] = []
+        
+    def is_valid_url(self, url: str, base_domain: str = None) -> bool:
+        """Check if URL is valid for crawling."""
+        try:
+            parsed = urlparse(url)
+            
+            # Must be HTTP/HTTPS
+            if parsed.scheme not in ('http', 'https'):
+                return False
+            
+            # Skip fragments and empty paths that just redirect
+            if parsed.fragment and not parsed.path:
+                return False
+                
+            # Skip common non-content files
+            skip_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.css', '.js', 
+                             '.ico', '.svg', '.woff', '.woff2', '.ttf', '.eot',
+                             '.zip', '.tar', '.gz', '.exe', '.dmg', '.pdf'}
+            if any(parsed.path.lower().endswith(ext) for ext in skip_extensions):
+                return False
+            
+            # Domain restriction
+            if self.same_domain_only and base_domain:
+                if parsed.netloc.lower() != base_domain.lower():
+                    return False
+                    
+            return True
+            
+        except Exception as e:
+            logger.debug(f"Invalid URL {url}: {e}")
+            return False
+    
+    def extract_links(self, url: str, html_content: str, base_domain: str) -> List[str]:
+        """Extract all valid links from HTML content."""
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            links = []
+            
+            # Find all links
+            for link in soup.find_all('a', href=True):
+                href = link['href'].strip()
+                if not href or href.startswith('#'):
+                    continue
+                    
+                # Convert relative URLs to absolute
+                absolute_url = urljoin(url, href)
+                
+                # Clean URL (remove fragments for deduplication)
+                clean_url = absolute_url.split('#')[0]
+                
+                if self.is_valid_url(clean_url, base_domain):
+                    links.append(clean_url)
+                    
+            return list(set(links))  # Remove duplicates
+            
+        except Exception as e:
+            logger.error(f"Error extracting links from {url}: {e}")
+            return []
+    
+    def crawl_recursive(self, root_urls: List[str]) -> List[str]:
+        """
+        Recursively crawl websites starting from root URLs.
+        
+        Args:
+            root_urls: List of starting URLs to crawl
+            
+        Returns:
+            List of all discovered URLs (including root URLs)
+        """
+        logger.info(f"Starting recursive crawl of {len(root_urls)} root URLs")
+        
+        # Initialize with root URLs
+        to_crawl = [(url, 0) for url in root_urls]  # (url, depth)
+        self.discovered_urls.extend(root_urls)
+        
+        while to_crawl and len(self.discovered_urls) < self.max_pages:
+            current_url, depth = to_crawl.pop(0)
+            
+            # Skip if already visited
+            if current_url in self.visited_urls:
+                continue
+                
+            # Skip if max depth exceeded
+            if depth > self.max_depth:
+                continue
+                
+            logger.info(f"Crawling: {current_url} (depth: {depth})")
+            
+            try:
+                # Fetch page content
+                response = requests.get(current_url, timeout=30)
+                response.raise_for_status()
+                
+                # Only process HTML content
+                content_type = response.headers.get('content-type', '').lower()
+                if 'text/html' not in content_type:
+                    logger.debug(f"Skipping non-HTML content: {current_url}")
+                    self.visited_urls.add(current_url)
+                    continue
+                
+                # Extract domain for filtering
+                base_domain = urlparse(current_url).netloc
+                
+                # Extract links if not at max depth
+                if depth < self.max_depth:
+                    links = self.extract_links(current_url, response.text, base_domain)
+                    
+                    # Add new links to crawl queue
+                    for link in links:
+                        if link not in self.visited_urls and link not in self.discovered_urls:
+                            to_crawl.append((link, depth + 1))
+                            self.discovered_urls.append(link)
+                            logger.debug(f"  Found link: {link}")
+                
+                self.visited_urls.add(current_url)
+                
+                # Rate limiting
+                time.sleep(self.delay)
+                
+            except Exception as e:
+                logger.warning(f"Error crawling {current_url}: {e}")
+                self.visited_urls.add(current_url)
+        
+        logger.info(f"Crawl completed. Found {len(self.discovered_urls)} total URLs")
+        return self.discovered_urls
+
+
 class IngestionService:
     """Service for ingesting documents into vector databases."""
     
@@ -48,12 +199,16 @@ class IngestionService:
         # Vector DB configuration
         self.vector_db_config = self.config['vector_db']
         
-        # Document converter setup
-        pipeline_options = PdfPipelineOptions()
-        pipeline_options.generate_picture_images = True
+        # Document converter setup - support both PDF and HTML
+        pdf_pipeline_options = PdfPipelineOptions()
+        pdf_pipeline_options.generate_picture_images = True
+        
         self.converter = DocumentConverter(
             format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_pipeline_options),
+                InputFormat.HTML: {},  # HTML format support
+                InputFormat.DOCX: {},  # Word documents
+                InputFormat.PPTX: {},  # PowerPoint presentations
             }
         )
         self.chunker = HybridChunker()
@@ -80,7 +235,7 @@ class IngestionService:
         return False
     
     def fetch_from_github(self, config: Dict[str, Any], temp_dir: str) -> List[str]:
-        """Fetch documents from a GitHub repository."""
+        """Fetch documents from a GitHub repository. Supports PDF, HTML, DOCX, PPTX."""
         url = config['url']
         path = config.get('path', '')
         branch = config.get('branch', 'main')
@@ -111,18 +266,19 @@ class IngestionService:
             logger.error(f"Path {path} not found in repository")
             return []
         
-        # Find all PDF files
-        pdf_files = []
+        # Find all supported document files
+        supported_extensions = ('.pdf', '.html', '.htm', '.docx', '.pptx')
+        document_files = []
         for root, _, files in os.walk(target_dir):
             for file in files:
-                if file.lower().endswith('.pdf'):
-                    pdf_files.append(os.path.join(root, file))
+                if file.lower().endswith(supported_extensions):
+                    document_files.append(os.path.join(root, file))
         
-        logger.info(f"Found {len(pdf_files)} PDF files in {target_dir}")
-        return pdf_files
+        logger.info(f"Found {len(document_files)} document files in {target_dir}")
+        return document_files
     
     def fetch_from_s3(self, config: Dict[str, Any], temp_dir: str) -> List[str]:
-        """Fetch documents from S3/MinIO."""
+        """Fetch documents from S3/MinIO. Supports PDF, HTML, DOCX, PPTX."""
         import boto3
         
         endpoint = config['endpoint']
@@ -146,7 +302,8 @@ class IngestionService:
         os.makedirs(download_dir, exist_ok=True)
         
         # List and download objects
-        pdf_files = []
+        supported_extensions = ('.pdf', '.html', '.htm', '.docx', '.pptx')
+        document_files = []
         try:
             paginator = s3.get_paginator('list_objects_v2')
             pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
@@ -154,66 +311,129 @@ class IngestionService:
             for page in pages:
                 for obj in page.get('Contents', []):
                     key = obj['Key']
-                    if key.lower().endswith('.pdf'):
+                    if key.lower().endswith(supported_extensions):
                         file_path = os.path.join(download_dir, os.path.basename(key))
                         logger.info(f"Downloading: {key}")
                         s3.download_file(bucket, key, file_path)
-                        pdf_files.append(file_path)
+                        document_files.append(file_path)
         
         except Exception as e:
             logger.error(f"Error fetching from S3: {e}")
             return []
         
-        logger.info(f"Downloaded {len(pdf_files)} PDF files from S3")
-        return pdf_files
+        logger.info(f"Downloaded {len(document_files)} document files from S3")
+        return document_files
     
     def fetch_from_urls(self, config: Dict[str, Any], temp_dir: str) -> List[str]:
-        """Fetch documents from direct URLs."""
-        import requests
-        
+        """
+        Fetch documents from direct URLs - supports PDF, HTML, DOCX, PPTX.
+        Includes recursive web crawling for comprehensive HTML content extraction.
+        """
         urls = config.get('urls', [])
-        logger.info(f"Fetching {len(urls)} documents from URLs")
+        crawl_config = config.get('crawl', {})
         
-        download_dir = os.path.join(temp_dir, 'url_files')
-        os.makedirs(download_dir, exist_ok=True)
+        # Crawling configuration
+        enable_crawling = crawl_config.get('enabled', False)
+        max_depth = crawl_config.get('max_depth', 2)
+        same_domain_only = crawl_config.get('same_domain_only', True)
+        max_pages = crawl_config.get('max_pages', 50)
+        crawl_delay = crawl_config.get('delay', 1.0)
         
-        pdf_files = []
-        for url in urls:
-            try:
-                filename = os.path.basename(url.split('?')[0])  # Remove query params
-                if not filename.lower().endswith('.pdf'):
-                    filename += '.pdf'
-                
-                file_path = os.path.join(download_dir, filename)
-                
-                logger.info(f"Downloading: {url}")
-                response = requests.get(url, timeout=60)
-                response.raise_for_status()
-                
-                with open(file_path, 'wb') as f:
-                    f.write(response.content)
-                
-                pdf_files.append(file_path)
+        logger.info(f"Processing {len(urls)} base URLs (crawling: {'enabled' if enable_crawling else 'disabled'})")
+        
+        # If crawling is enabled, use web crawler
+        if enable_crawling:
+            crawler = WebCrawler(
+                max_depth=max_depth,
+                same_domain_only=same_domain_only,
+                max_pages=max_pages,
+                delay=crawl_delay
+            )
             
-            except Exception as e:
-                logger.error(f"Error downloading {url}: {e}")
+            # Separate HTML URLs for crawling vs direct document URLs
+            html_urls = []
+            direct_urls = []
+            
+            for url in urls:
+                if url.lower().endswith(('.pdf', '.docx', '.pptx')):
+                    direct_urls.append(url)
+                else:
+                    html_urls.append(url)  # Assume HTML for crawling
+            
+            # Crawl HTML URLs recursively
+            if html_urls:
+                logger.info(f"Starting recursive crawl from {len(html_urls)} root URLs")
+                crawled_urls = crawler.crawl_recursive(html_urls)
+                all_urls = direct_urls + crawled_urls
+            else:
+                all_urls = direct_urls
+                
+        else:
+            # No crawling - process URLs directly
+            all_urls = urls
         
-        logger.info(f"Downloaded {len(pdf_files)} PDF files from URLs")
-        return pdf_files
+        # Validate and filter URLs
+        supported_formats = ['.pdf', '.html', '.htm', '.docx', '.pptx']
+        valid_urls = []
+        
+        for url in all_urls:
+            try:
+                # Basic URL validation
+                if url.startswith(('http://', 'https://')):
+                    # Check if URL appears to point to a supported format
+                    url_lower = url.lower()
+                    is_supported = (
+                        any(url_lower.endswith(fmt) for fmt in supported_formats) or
+                        'html' in url_lower or  # HTML pages without .html extension
+                        url_lower.endswith('/') or  # Directory URLs (likely HTML)
+                        '?' in url or  # URLs with parameters (often dynamic HTML)
+                        '#' in url or  # URLs with fragments (HTML pages)
+                        not any(url_lower.endswith(ext) for ext in ['.jpg', '.png', '.css', '.js'])  # Exclude obvious non-documents
+                    )
+                    
+                    if is_supported:
+                        valid_urls.append(url)
+                        if enable_crawling and url not in urls:
+                            logger.debug(f"Added crawled URL: {url}")
+                        else:
+                            logger.info(f"Added direct URL: {url}")
+                    else:
+                        logger.debug(f"Skipped unsupported URL: {url}")
+                else:
+                    logger.warning(f"Invalid URL format: {url}")
+            except Exception as e:
+                logger.error(f"Error validating URL {url}: {e}")
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_urls = []
+        for url in valid_urls:
+            if url not in seen:
+                seen.add(url)
+                unique_urls.append(url)
+        
+        logger.info(f"Prepared {len(unique_urls)} URLs for processing ({len(unique_urls) - len(urls)} discovered via crawling)")
+        return unique_urls
     
-    def process_documents(self, pdf_files: List[str]) -> List[LlamaStackDocument]:
-        """Process PDF files into chunks using docling."""
-        logger.info(f"Processing {len(pdf_files)} documents with docling...")
+    def process_documents(self, sources: List[str]) -> List[LlamaStackDocument]:
+        """Process documents (files or URLs) into chunks using docling."""
+        logger.info(f"Processing {len(sources)} documents with docling...")
         
         llama_documents = []
         doc_id = 0
         
-        for file_path in pdf_files:
+        for source in sources:
             try:
-                logger.info(f"Processing: {os.path.basename(file_path)}")
+                # Determine source type and display name
+                if source.startswith(('http://', 'https://')):
+                    source_name = source.split('/')[-1] or source
+                    logger.info(f"Processing URL: {source_name}")
+                else:
+                    source_name = os.path.basename(source)
+                    logger.info(f"Processing file: {source_name}")
                 
-                # Convert document with docling
-                docling_doc = self.converter.convert(source=file_path).document
+                # Convert document with docling (works with both URLs and file paths)
+                docling_doc = self.converter.convert(source=source).document
                 chunks = self.chunker.chunk(docling_doc)
                 chunk_count = 0
                 
@@ -230,14 +450,14 @@ class IngestionService:
                                 document_id=f"doc-{doc_id}",
                                 content=chunk.text,
                                 mime_type="text/plain",
-                                metadata={"source": os.path.basename(file_path)},
+                                metadata={"source": source_name},
                             )
                         )
                 
                 logger.info(f"  → Created {chunk_count} chunks")
             
             except Exception as e:
-                logger.error(f"Error processing {file_path}: {e}")
+                logger.error(f"Error processing {source}: {e}")
         
         logger.info(f"Total chunks created: {len(llama_documents)}")
         return llama_documents
@@ -310,21 +530,21 @@ class IngestionService:
         with tempfile.TemporaryDirectory() as temp_dir:
             # Fetch documents based on source type
             if source == 'GITHUB':
-                pdf_files = self.fetch_from_github(source_config, temp_dir)
+                document_sources = self.fetch_from_github(source_config, temp_dir)
             elif source == 'S3':
-                pdf_files = self.fetch_from_s3(source_config, temp_dir)
+                document_sources = self.fetch_from_s3(source_config, temp_dir)
             elif source == 'URL':
-                pdf_files = self.fetch_from_urls(source_config, temp_dir)
+                document_sources = self.fetch_from_urls(source_config, temp_dir)
             else:
                 logger.error(f"Unknown source type: {source}")
                 return False
             
-            if not pdf_files:
-                logger.warning(f"No PDF files found for pipeline '{pipeline_name}'")
+            if not document_sources:
+                logger.warning(f"No documents found for pipeline '{pipeline_name}'")
                 return False
             
             # Process documents
-            documents = self.process_documents(pdf_files)
+            documents = self.process_documents(document_sources)
             
             if not documents:
                 logger.warning(f"No documents processed for pipeline '{pipeline_name}'")

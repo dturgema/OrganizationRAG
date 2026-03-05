@@ -83,6 +83,7 @@ minio-pipeline:
 
 #### URL Source
 
+**Basic URL Processing:**
 ```yaml
 url-pipeline:
   enabled: true
@@ -93,8 +94,67 @@ url-pipeline:
   config:
     urls:
       - "https://example.com/document1.pdf"
-      - "https://example.com/document2.pdf"
+      - "https://example.com/page.html"
+      - "https://example.com/document.docx"
 ```
+
+**Recursive Web Crawling:**
+```yaml
+web-crawler-pipeline:
+  enabled: true
+  name: "crawled-docs-vector-db"
+  version: "1.0"
+  vector_store_name: "crawled-docs-vector-db-v1-0"
+  source: URL
+  config:
+    urls:
+      - "https://docs.company.com/knowledge-base/"  # Root page
+    
+    # Recursive crawling configuration
+    crawl:
+      enabled: true              # Enable web crawling
+      max_depth: 3               # Crawl 3 levels deep
+      same_domain_only: true     # Stay within same domain
+      max_pages: 100             # Maximum pages to process
+      delay: 1.0                 # Delay between requests (seconds)
+```
+
+**Supported Formats:** PDF, HTML, DOCX, PPTX
+
+### Web Crawling Features
+
+The ingestion service includes intelligent web crawling capabilities for comprehensive HTML content extraction:
+
+#### Crawling Configuration Options
+
+- **`enabled`**: Enable/disable recursive crawling (default: false)
+- **`max_depth`**: Maximum crawling depth from root URLs (default: 2)
+- **`same_domain_only`**: Restrict crawling to same domain (default: true)
+- **`max_pages`**: Maximum number of pages to process (default: 50)
+- **`delay`**: Delay between requests in seconds (default: 1.0)
+
+#### Crawling Behavior
+
+- **Link Discovery**: Automatically finds and follows `<a>` tags in HTML pages
+- **Domain Filtering**: Can restrict crawling to same domain for focused extraction
+- **Duplicate Detection**: Prevents processing the same URL multiple times
+- **Content Filtering**: Skips non-content files (images, CSS, JavaScript, etc.)
+- **Rate Limiting**: Configurable delays to be respectful to target servers
+
+#### Best Practices
+
+1. **Start Small**: Begin with `max_depth: 2` and `max_pages: 25` for testing
+2. **Be Respectful**: Use appropriate delays (1-3 seconds) for external sites
+3. **Stay Focused**: Use `same_domain_only: true` to avoid crawling the entire web
+4. **Monitor Progress**: Watch logs to understand crawling behavior
+5. **Internal vs External**: Use faster settings for internal sites, slower for external
+
+#### Example Use Cases
+
+- **Documentation Sites**: Crawl entire product documentation
+- **Company Wikis**: Extract all knowledge base articles  
+- **Learning Resources**: Process tutorial series and guides
+- **Policy Collections**: Gather all company policies and procedures
 
 ## Usage
 
@@ -395,6 +455,22 @@ A: Currently PDF only. Docling supports others but requires code changes.
 **Q: Can I customize chunking strategy?**
 
 A: Yes, modify the `HybridChunker` parameters in `ingest.py`.
+
+**Q: How does web crawling work?**
+
+A: When enabled, the crawler starts from root URLs, extracts all links, and recursively processes linked pages up to the configured depth and page limits.
+
+**Q: Why is crawling slow?**
+
+A: Crawling includes deliberate delays to be respectful to target servers. Adjust the `delay` setting, but be mindful of server load.
+
+**Q: Crawler isn't finding pages I expect?**
+
+A: Check that links use `<a>` tags with `href` attributes. The crawler follows HTML links, not JavaScript-generated content.
+
+**Q: Can I crawl password-protected sites?**
+
+A: Not directly. The crawler uses basic HTTP requests without authentication. Consider downloading content first or extending the crawler for your auth method.
 
 ## Support
 

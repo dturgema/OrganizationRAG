@@ -1,0 +1,145 @@
+# Example Ingestion Pipeline Configuration with HTML Support
+# This configuration demonstrates how to use HTML URLs alongside PDFs
+
+# Llama Stack Configuration
+llamastack:
+  base_url: "http://llamastack:8321"
+  
+# Vector Database Configuration
+vector_db:
+  embedding_model: "all-MiniLM-L6-v2"
+  embedding_dimension: 384
+  chunk_size_in_tokens: 512
+
+# Pipeline Configurations
+pipelines:
+  # Web Documentation Pipeline with Recursive Crawling
+  web-docs-pipeline:
+    enabled: true
+    name: "web-docs-vector-db"
+    version: "1.0"
+    vector_store_name: "web-docs-vector-db-v1-0"
+    source: URL
+    config:
+      urls:
+        # Root pages - crawler will discover all linked pages
+        - "https://docs.python.org/3/tutorial/"
+        - "https://kubernetes.io/docs/concepts/"
+        - "https://streamlit.docs.streamlit.io/"
+      
+      # Recursive crawling configuration
+      crawl:
+        enabled: true              # Enable recursive crawling
+        max_depth: 3               # How deep to crawl (3 levels from root)
+        same_domain_only: true     # Stay within the same domain
+        max_pages: 100             # Maximum pages to process
+        delay: 1.0                 # Delay between requests (seconds)
+
+  # Company Knowledge Base with Deep Crawling
+  company-knowledge-pipeline:
+    enabled: true
+    name: "company-kb-vector-db"
+    version: "1.0"
+    vector_store_name: "company-kb-vector-db-v1-0"
+    source: URL
+    config:
+      urls:
+        # Root pages for comprehensive crawling
+        - "https://wiki.company.com/departments/"
+        - "https://docs.company.com/processes/"
+        - "https://knowledge.company.com/guides/"
+      
+      crawl:
+        enabled: true
+        max_depth: 4               # Deep crawling for comprehensive coverage
+        same_domain_only: true     # Stay within company domains
+        max_pages: 200             # Allow more pages for company knowledge
+        delay: 0.5                 # Faster crawling for internal sites
+
+  # Mixed Format Pipeline (PDF + HTML + DOCX) - No Crawling
+  mixed-docs-pipeline:
+    enabled: true
+    name: "mixed-docs-vector-db" 
+    version: "1.0"
+    vector_store_name: "mixed-docs-vector-db-v1-0"
+    source: URL
+    config:
+      urls:
+        # Direct PDF documents (no crawling needed)
+        - "https://example.com/manual.pdf"
+        - "https://company.com/policy.pdf"
+        # Single HTML pages
+        - "https://company.com/specific-page.html"
+        # Office documents
+        - "https://sharepoint.company.com/documents/handbook.docx"
+        - "https://sharepoint.company.com/presentations/training.pptx"
+      
+      # No crawling for direct document links
+      crawl:
+        enabled: false
+
+  # GitHub Mixed Formats Pipeline
+  github-mixed-pipeline:
+    enabled: true
+    name: "github-mixed-vector-db"
+    version: "1.0"
+    vector_store_name: "github-mixed-vector-db-v1-0"
+    source: GITHUB
+    config:
+      url: "https://github.com/your-org/documentation.git"
+      path: "docs"  # Contains .md, .html, .pdf files
+      branch: "main"
+
+  # Product Documentation - Focused Crawling
+  product-docs-pipeline:
+    enabled: false  # Enable when needed
+    name: "product-docs-vector-db"
+    version: "1.0"
+    vector_store_name: "product-docs-vector-db-v1-0"
+    source: URL
+    config:
+      urls:
+        # Product documentation root
+        - "https://docs.product.com/api/"
+        - "https://docs.product.com/guides/"
+      
+      crawl:
+        enabled: true
+        max_depth: 2               # Focused crawling 
+        same_domain_only: true
+        max_pages: 50              # Controlled scope
+        delay: 2.0                 # Respectful crawling
+
+  # External Resources - Conservative Crawling
+  external-resources-pipeline:
+    enabled: false  # Enable carefully for external sites
+    name: "external-resources-vector-db"
+    version: "1.0"
+    vector_store_name: "external-resources-vector-db-v1-0"
+    source: URL
+    config:
+      urls:
+        # External documentation (be respectful!)
+        - "https://fastapi.tiangolo.com/tutorial/"
+        - "https://pydantic-docs.helpmanual.io/"
+      
+      crawl:
+        enabled: true
+        max_depth: 2               # Shallow crawling for external sites
+        same_domain_only: true     # Respect domain boundaries
+        max_pages: 25              # Limited scope
+        delay: 3.0                 # Slower, more respectful crawling
+
+  # S3 Mixed Formats Pipeline  
+  s3-mixed-pipeline:
+    enabled: false  # Disabled by default
+    name: "s3-mixed-vector-db"
+    version: "1.0"
+    vector_store_name: "s3-mixed-vector-db-v1-0"
+    source: S3
+    config:
+      endpoint: "http://minio:9000"
+      bucket: "documents"
+      access_key: "minio_rag_user"
+      secret_key: "minio_rag_password"
+      prefix: "knowledge-base/"  # Mix of PDF, HTML, DOCX files
