@@ -1,0 +1,169 @@
+# Enhanced RAG Docker Management Makefile
+# Simplifies building, testing, and deploying enhanced RAG containers
+
+.PHONY: help build build-enhanced build-production build-all test clean up down logs status push
+
+# Configuration
+IMAGE_NAME := rag-ingestion-enhanced
+VERSION := 2.0.0
+REGISTRY := ghcr.io/dturgema
+COMPOSE_FILE := docker-compose.enhanced.yml
+
+# Colors for output
+BLUE := \033[0;34m
+GREEN := \033[0;32m  
+YELLOW := \033[1;33m
+RED := \033[0;31m
+NC := \033[0m # No Color
+
+help: ## Show this help message
+	@echo -e "$(BLUE)Enhanced RAG Docker Management$(NC)"
+	@echo -e "$(BLUE)==============================$(NC)"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "$(GREEN)%-20s$(NC) %s\n", $$1, $$2}'
+
+build: build-production ## Build production container (default)
+
+build-enhanced: ## Build enhanced development container
+	@echo -e "$(BLUE)Building enhanced container...$(NC)"
+	docker build -f ingestion-service/Containerfile.enhanced \
+		-t $(IMAGE_NAME):$(VERSION)-enhanced \
+		-t $(IMAGE_NAME):enhanced \
+		.
+	@echo -e "$(GREEN)✓ Enhanced container built$(NC)"
+
+build-production: ## Build optimized production container  
+	@echo -e "$(BLUE)Building production container...$(NC)"
+	docker build -f ingestion-service/Containerfile.production \
+		-t $(IMAGE_NAME):$(VERSION)-production \
+		-t $(IMAGE_NAME):production \
+		-t $(IMAGE_NAME):latest \
+		.
+	@echo -e "$(GREEN)✓ Production container built$(NC)"
+
+build-all: build-enhanced build-production ## Build both enhanced and production containers
+
+test: ## Test run the production container
+	@echo -e "$(BLUE)Testing container with demo config...$(NC)"
+	docker run --rm \
+		-v $(PWD)/ingestion-config-crawl-demo.yaml:/config/ingestion-config.yaml:ro \
+		-e LOG_LEVEL=DEBUG \
+		$(IMAGE_NAME):production
+	@echo -e "$(GREEN)✓ Container test completed$(NC)"
+
+test-enhanced: ## Test run the enhanced container
+	@echo -e "$(BLUE)Testing enhanced container...$(NC)"
+	docker run --rm \
+		-v $(PWD)/ingestion-config-crawl-demo.yaml:/config/ingestion-config.yaml:ro \
+		-e LOG_LEVEL=DEBUG \
+		$(IMAGE_NAME):enhanced
+
+shell: ## Open interactive shell in enhanced container
+	@echo -e "$(BLUE)Opening shell in enhanced container...$(NC)"
+	docker run -it --rm \
+		-v $(PWD)/ingestion-service:/app:rw \
+		-v $(PWD):/workspace:ro \
+		--entrypoint /bin/bash \
+		$(IMAGE_NAME):enhanced
+
+up: ## Start the complete RAG stack
+	@echo -e "$(BLUE)Starting enhanced RAG stack...$(NC)"
+	docker-compose -f $(COMPOSE_FILE) up -d
+	@echo -e "$(GREEN)✓ RAG stack started$(NC)"
+	@echo -e "$(YELLOW)RAG UI: http://localhost:8501$(NC)"
+	@echo -e "$(YELLOW)LlamaStack: http://localhost:8321$(NC)"
+
+down: ## Stop the RAG stack
+	@echo -e "$(BLUE)Stopping RAG stack...$(NC)"
+	docker-compose -f $(COMPOSE_FILE) down
+	@echo -e "$(GREEN)✓ RAG stack stopped$(NC)"
+
+logs: ## View logs from ingestion service
+	docker-compose -f $(COMPOSE_FILE) logs -f rag-ingestion-enhanced
+
+logs-all: ## View logs from all services
+	docker-compose -f $(COMPOSE_FILE) logs -f
+
+status: ## Show status of all containers
+	@echo -e "$(BLUE)Container Status:$(NC)"
+	docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+	@echo ""
+	@echo -e "$(BLUE)Image Sizes:$(NC)"
+	docker images | grep $(IMAGE_NAME) | head -5
+
+clean: ## Remove containers and images
+	@echo -e "$(YELLOW)Cleaning up containers and images...$(NC)"
+	docker-compose -f $(COMPOSE_FILE) down -v --rmi all --remove-orphans
+	docker image prune -f
+	@echo -e "$(GREEN)✓ Cleanup completed$(NC)"
+
+clean-all: ## Remove everything including volumes
+	@echo -e "$(RED)Warning: This will remove all data!$(NC)"
+	@read -p "Are you sure? [y/N]: " confirm && [ "$$confirm" = "y" ]
+	docker-compose -f $(COMPOSE_FILE) down -v --rmi all --remove-orphans
+	docker volume prune -f
+	docker system prune -f
+
+push: ## Push images to registry
+	@echo -e "$(BLUE)Pushing images to $(REGISTRY)...$(NC)"
+	docker tag $(IMAGE_NAME):production $(REGISTRY)/$(IMAGE_NAME):production
+	docker tag $(IMAGE_NAME):enhanced $(REGISTRY)/$(IMAGE_NAME):enhanced
+	docker tag $(IMAGE_NAME):latest $(REGISTRY)/$(IMAGE_NAME):latest
+	docker push $(REGISTRY)/$(IMAGE_NAME):production
+	docker push $(REGISTRY)/$(IMAGE_NAME):enhanced  
+	docker push $(REGISTRY)/$(IMAGE_NAME):latest
+	@echo -e "$(GREEN)✓ Images pushed to registry$(NC)"
+
+pull: ## Pull images from registry
+	@echo -e "$(BLUE)Pulling images from $(REGISTRY)...$(NC)"
+	docker pull $(REGISTRY)/$(IMAGE_NAME):production
+	docker pull $(REGISTRY)/$(IMAGE_NAME):enhanced
+	docker tag $(REGISTRY)/$(IMAGE_NAME):production $(IMAGE_NAME):production
+	docker tag $(REGISTRY)/$(IMAGE_NAME):enhanced $(IMAGE_NAME):enhanced
+	@echo -e "$(GREEN)✓ Images pulled from registry$(NC)"
+
+restart: ## Restart the RAG stack
+	$(MAKE) down
+	$(MAKE) up
+
+rebuild: ## Rebuild and restart everything
+	$(MAKE) build-all
+	$(MAKE) restart
+
+health: ## Check health of all services
+	@echo -e "$(BLUE)Health Check Status:$(NC)"
+	@for container in $$(docker-compose -f $(COMPOSE_FILE) ps -q); do \
+		name=$$(docker inspect --format='{{.Name}}' $$container | sed 's/\///'); \
+		health=$$(docker inspect --format='{{.State.Health.Status}}' $$container 2>/dev/null || echo "no health check"); \
+		echo -e "$(GREEN)$$name$(NC): $$health"; \
+	done
+
+debug: ## Run ingestion in debug mode with logs
+	@echo -e "$(BLUE)Starting debug session...$(NC)"
+	docker run -it --rm \
+		--network $$(docker-compose -f $(COMPOSE_FILE) ps -q pgvector | head -1 | xargs docker inspect --format='{{range .NetworkSettings.Networks}}{{.NetworkID}}{{end}}') \
+		-v $(PWD)/ingestion-config-crawl-demo.yaml:/config/ingestion-config.yaml:ro \
+		-e LOG_LEVEL=DEBUG \
+		-e LLAMASTACK_URL=http://llamastack:8321 \
+		$(IMAGE_NAME):enhanced
+
+# Development helpers
+dev-setup: build-enhanced up ## Complete development setup
+	@echo -e "$(GREEN)✓ Development environment ready!$(NC)"
+	@echo -e "$(YELLOW)Next steps:$(NC)"
+	@echo "  make logs     - View ingestion logs"  
+	@echo "  make shell    - Open container shell"
+	@echo "  make test     - Test ingestion"
+
+production-deploy: build-production ## Production deployment
+	@echo -e "$(BLUE)Production deployment...$(NC)"
+	docker-compose -f $(COMPOSE_FILE) up -d --scale rag-ingestion-enhanced=0
+	@echo -e "$(GREEN)✓ Production services started$(NC)"
+	@echo -e "$(YELLOW)Run 'make ingest-production' to start ingestion$(NC)"
+
+ingest-production: ## Run production ingestion
+	docker run --rm \
+		--network $$(docker-compose -f $(COMPOSE_FILE) ps -q pgvector | head -1 | xargs docker inspect --format='{{range .NetworkSettings.Networks}}{{.NetworkID}}{{end}}') \
+		-v $(PWD)/ingestion-config-crawl-demo.yaml:/config/ingestion-config.yaml:ro \
+		-e LLAMASTACK_URL=http://llamastack:8321 \
+		$(IMAGE_NAME):production

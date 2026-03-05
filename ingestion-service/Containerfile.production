@@ -1,0 +1,98 @@
+# Multi-Stage Production Containerfile for Enhanced RAG Ingestion Service
+# Optimized for size and security with recursive web crawling capabilities
+
+# ================================
+# Stage 1: Builder
+# ================================
+FROM python:3.12-slim as builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    git \
+    libxml2-dev \
+    libxslt1-dev \
+    libffi-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy and install requirements
+COPY ingestion-service/requirements.txt .
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
+
+# ================================
+# Stage 2: Runtime
+# ================================
+FROM python:3.12-slim as runtime
+
+# Metadata
+LABEL maintainer="dturgema" \
+      description="Production RAG Ingestion Service with Web Crawling" \
+      version="2.0.0" \
+      features="recursive-crawling,multi-format,production-ready"
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Document processing
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    poppler-utils \
+    # Graphics libraries (minimal set)
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    # Web scraping
+    libxml2 \
+    libxslt1.1 \
+    # Security updates
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user
+RUN groupadd -r raguser && \
+    useradd -r -g raguser raguser && \
+    mkdir -p /app /config /data /logs && \
+    chown -R raguser:raguser /app /config /data /logs
+
+# Set working directory
+WORKDIR /app
+
+# Copy application files
+COPY ingestion-service/ingest.py .
+COPY ingestion-config-*.yaml ./examples/
+COPY deploy/local/ingestion-config.yaml ./examples/default-config.yaml
+
+# Set permissions
+RUN chmod +x ingest.py && \
+    chown -R raguser:raguser /app
+
+# Switch to non-root user
+USER raguser
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
+    INGESTION_CONFIG=/config/ingestion-config.yaml \
+    LOG_LEVEL=INFO \
+    MAX_WORKERS=4 \
+    CRAWL_DELAY=1.0 \
+    MAX_PAGES=50
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import requests; import sys; sys.exit(0)"
+
+# Default command
+CMD ["python", "ingest.py"]

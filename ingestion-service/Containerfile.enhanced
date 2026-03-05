@@ -1,0 +1,92 @@
+# Enhanced RAG Ingestion Service with Recursive Web Crawling
+# Supports PDF, HTML, DOCX, PPTX processing with intelligent web crawling
+FROM python:3.12-slim as base
+
+# Metadata labels
+LABEL maintainer="dturgema"
+LABEL description="Enhanced RAG Ingestion Service with Recursive Web Crawling"
+LABEL version="2.0.0"
+LABEL features="recursive-crawling,multi-format-docs,docling-integration"
+
+# Install system dependencies for document processing and web crawling
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Core utilities
+    git \
+    curl \
+    wget \
+    # Document processing dependencies
+    libgl1 \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    # OCR and PDF processing
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    poppler-utils \
+    # Web scraping and parsing dependencies
+    libxml2-dev \
+    libxslt1-dev \
+    libffi-dev \
+    libssl-dev \
+    # Additional language packs for international content
+    tesseract-ocr-fra \
+    tesseract-ocr-deu \
+    tesseract-ocr-spa \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better Docker layer caching
+COPY requirements.txt .
+
+# Upgrade pip and install Python dependencies
+RUN pip install --upgrade pip setuptools wheel && \
+    # Install dependencies with optimizations
+    pip install --no-cache-dir \
+    --index-url https://pypi.org/simple \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements.txt && \
+    # Clean up pip cache
+    pip cache purge
+
+# Copy application files
+COPY ingest.py .
+RUN chmod +x ingest.py
+
+# Copy configuration examples (paths relative to build context)
+# Note: When building, use: docker build -f ingestion-service/Containerfile.enhanced .
+COPY ingestion-config-*.yaml /app/examples/
+COPY deploy/local/ingestion-config.yaml /app/examples/default-config.yaml
+
+# Create necessary directories
+RUN mkdir -p /config /app/logs /app/temp && \
+    # Set proper permissions
+    chmod -R 755 /app && \
+    chmod -R 777 /app/temp /app/logs
+
+# Create non-root user for security
+RUN groupadd -r raguser && useradd -r -g raguser raguser && \
+    chown -R raguser:raguser /app /config
+USER raguser
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV INGESTION_CONFIG=/config/ingestion-config.yaml
+ENV LOG_LEVEL=INFO
+ENV TEMP_DIR=/app/temp
+ENV MAX_WORKERS=4
+
+# Health check for container monitoring
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)"
+
+# Expose metrics port (optional, for monitoring)
+EXPOSE 8080
+
+# Default command
+CMD ["python", "ingest.py"]
