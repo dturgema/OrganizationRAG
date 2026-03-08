@@ -83,6 +83,10 @@ services:
       - MAX_PAGES=100
       - PGVECTOR_HOST=pgvector
       - LLAMASTACK_URL=http://llamastack:8321
+      # Confluence integration (set these in your .env file)
+      - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN:-}
+      - CONFLUENCE_BASE_URL=${CONFLUENCE_BASE_URL:-}
+      - CONFLUENCE_USERNAME=${CONFLUENCE_USERNAME:-}
     volumes:
       - ./ingestion-config-crawl-demo.yaml:/config/ingestion-config.yaml:ro
       - ingestion_logs:/app/logs

@@ -1,0 +1,157 @@
+# Confluence Integration Configuration Examples
+# This demonstrates how to integrate Confluence documents with web crawling
+
+llamastack:
+  base_url: "http://llamastack:8321"
+  
+vector_db:
+  embedding_model: "all-MiniLM-L6-v2"
+  embedding_dimension: 384
+  chunk_size_in_tokens: 512
+
+pipelines:
+  # Company Confluence Knowledge Base
+  confluence-company-kb:
+    enabled: true
+    name: "confluence-company-kb"
+    version: "1.0"
+    vector_store_name: "confluence-company-kb-v1-0"
+    source: URL
+    config:
+      urls:
+        # Confluence space URLs - crawler will find all pages
+        - "https://company.atlassian.net/wiki/spaces/ENG/overview"
+        - "https://company.atlassian.net/wiki/spaces/HR/overview"
+        # Specific Confluence pages
+        - "https://company.atlassian.net/wiki/spaces/ENG/pages/123456/Development+Guidelines"
+        # Mix with regular documentation
+        - "https://docs.company.com/api-guide/"
+      
+      crawl:
+        enabled: true
+        max_depth: 3
+        same_domain_only: false  # Allow Confluence + docs domains
+        max_pages: 150
+        delay: 2.0  # Be respectful to Confluence
+        
+        # Confluence-specific configuration
+        confluence:
+          base_url: "https://company.atlassian.net"
+          # Authentication options (choose one):
+          
+          # Option 1: API Token (Recommended for Atlassian Cloud)
+          username: "your-email@company.com"
+          api_token: "${CONFLUENCE_API_TOKEN}"  # Set as environment variable
+          
+          # Option 2: Personal Access Token  
+          # token: "${CONFLUENCE_PAT}"
+          
+          # Option 3: Basic Auth (for Server/Data Center)
+          # username: "your-username"
+          # password: "${CONFLUENCE_PASSWORD}"
+
+  # Mixed Web + Confluence Documentation
+  mixed-docs-confluence:
+    enabled: true
+    name: "mixed-docs-confluence"
+    version: "1.0"
+    vector_store_name: "mixed-docs-confluence-v1-0"
+    source: URL
+    config:
+      urls:
+        # Regular documentation sites
+        - "https://docs.myapp.com/user-guide/"
+        - "https://api-docs.myapp.com/"
+        # Confluence pages linked from documentation
+        - "https://mycompany.atlassian.net/wiki/spaces/PROD/overview"
+        # PDFs and other documents
+        - "https://downloads.myapp.com/manual.pdf"
+      
+      crawl:
+        enabled: true
+        max_depth: 2
+        same_domain_only: false
+        max_pages: 100
+        delay: 1.5
+        
+        confluence:
+          base_url: "https://mycompany.atlassian.net"
+          username: "service-account@mycompany.com"
+          api_token: "${CONFLUENCE_TOKEN}"
+
+  # Public Confluence + GitHub Pages
+  open-source-docs:
+    enabled: false  # Enable for open source projects
+    name: "open-source-docs"
+    version: "1.0"
+    vector_store_name: "open-source-docs-v1-0"
+    source: URL
+    config:
+      urls:
+        # GitHub Pages documentation
+        - "https://projectname.github.io/docs/"
+        # Public Confluence (if available)
+        - "https://opensource-project.atlassian.net/wiki/spaces/DOCS/overview"
+      
+      crawl:
+        enabled: true
+        max_depth: 3
+        same_domain_only: false
+        max_pages: 75
+        delay: 2.0
+        
+        # For public Confluence, you might not need auth
+        confluence:
+          base_url: "https://opensource-project.atlassian.net"
+          # No authentication for public access
+
+  # Specific Confluence Space Deep Dive
+  confluence-engineering-space:
+    enabled: false  # Enable for specific space processing
+    name: "engineering-confluence"
+    version: "1.0"
+    vector_store_name: "engineering-confluence-v1-0"
+    source: URL
+    config:
+      urls:
+        # Start from space overview - will discover all pages
+        - "https://company.atlassian.net/wiki/spaces/ENG/overview"
+      
+      crawl:
+        enabled: true
+        max_depth: 5  # Deep crawling for comprehensive coverage
+        same_domain_only: true  # Stay within Confluence
+        max_pages: 200
+        delay: 1.0  # Faster for internal systems
+        
+        confluence:
+          base_url: "https://company.atlassian.net"
+          username: "engineering-bot@company.com"
+          api_token: "${ENG_CONFLUENCE_TOKEN}"
+
+# Environment Variables Required:
+# export CONFLUENCE_API_TOKEN="your-api-token-here"
+# export CONFLUENCE_PAT="your-personal-access-token-here"  
+# export CONFLUENCE_PASSWORD="your-password-here"
+# export CONFLUENCE_TOKEN="your-token-here"
+# export ENG_CONFLUENCE_TOKEN="engineering-specific-token"
+
+# Confluence Authentication Setup:
+# 1. API Token (Atlassian Cloud - Recommended):
+#    - Go to: https://id.atlassian.com/manage-profile/security/api-tokens
+#    - Create API token
+#    - Use your email as username + API token as password
+#
+# 2. Personal Access Token (Server/Data Center):
+#    - Go to Confluence Settings > Personal Access Tokens
+#    - Create new token with appropriate permissions
+#
+# 3. Basic Auth (Legacy):
+#    - Use your regular Confluence username and password
+#    - Not recommended for production use
+
+# URL Formats Supported:
+# - Space overview: /wiki/spaces/SPACE/overview
+# - Specific pages: /wiki/spaces/SPACE/pages/123456/Page+Title
+# - Display URLs: /wiki/display/SPACE/Page+Title  
+# - Direct page links with pageId parameter

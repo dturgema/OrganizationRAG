@@ -4,9 +4,9 @@ FROM python:3.12-slim as base
 
 # Metadata labels
 LABEL maintainer="dturgema"
-LABEL description="Enhanced RAG Ingestion Service with Recursive Web Crawling"
-LABEL version="2.0.0"
-LABEL features="recursive-crawling,multi-format-docs,docling-integration"
+LABEL description="Enhanced RAG Ingestion Service with Web Crawling and Confluence Integration"
+LABEL version="2.1.0"
+LABEL features="recursive-crawling,multi-format-docs,confluence-integration,docling-integration"
 
 # Install system dependencies for document processing and web crawling
 RUN apt-get update && apt-get install -y --no-install-recommends \

@@ -33,9 +33,9 @@ FROM python:3.12-slim as runtime
 
 # Metadata
 LABEL maintainer="dturgema" \
-      description="Production RAG Ingestion Service with Web Crawling" \
-      version="2.0.0" \
-      features="recursive-crawling,multi-format,production-ready"
+      description="Production RAG Ingestion Service with Web Crawling and Confluence" \
+      version="2.1.0" \
+      features="recursive-crawling,multi-format,confluence-integration,production-ready"
 
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv

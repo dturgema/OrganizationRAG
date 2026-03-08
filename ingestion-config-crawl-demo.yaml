@@ -70,6 +70,33 @@ pipelines:
         max_pages: 20
         delay: 2.0
 
+  # Demo: Confluence Integration (replace with your Confluence URL)
+  confluence-demo:
+    enabled: false  # Enable and configure with your Confluence details
+    name: "confluence-demo"
+    version: "1.0"
+    vector_store_name: "confluence-demo-v1-0"
+    source: URL
+    config:
+      urls:
+        # Replace with your actual Confluence URLs
+        - "https://yourcompany.atlassian.net/wiki/spaces/DEMO/overview"
+        # Mix with regular documentation
+        - "https://docs.yourcompany.com/"
+      
+      crawl:
+        enabled: true
+        max_depth: 3
+        same_domain_only: false  # Allow both Confluence and docs domains
+        max_pages: 50
+        delay: 2.0
+        
+        # Confluence configuration - UPDATE WITH YOUR DETAILS
+        confluence:
+          base_url: "https://yourcompany.atlassian.net"
+          username: "your-email@yourcompany.com"
+          api_token: "${CONFLUENCE_API_TOKEN}"  # Set as environment variable
+
 # Usage Instructions:
 # 1. Enable the python-docs-crawler pipeline above
 # 2. Run: cd deploy/local && make start

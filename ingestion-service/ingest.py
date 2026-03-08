@@ -13,11 +13,13 @@ import tempfile
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Any, Set
+from typing import List, Dict, Any, Set, Optional, Union
 import logging
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, parse_qs
 import requests
 from bs4 import BeautifulSoup
+import json
+import base64
 
 from llama_stack_client import LlamaStackClient
 from llama_stack_client.types import Document as LlamaStackDocument
@@ -37,11 +39,195 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class ConfluenceClient:
+    """Confluence API client for accessing Confluence pages and spaces."""
+    
+    def __init__(self, base_url: str, username: str = None, password: str = None, 
+                 token: str = None, api_token: str = None):
+        """
+        Initialize Confluence client.
+        
+        Args:
+            base_url: Confluence base URL (e.g., https://company.atlassian.net)
+            username: Username for basic auth
+            password: Password for basic auth  
+            token: Personal Access Token
+            api_token: API token for Atlassian Cloud
+        """
+        self.base_url = base_url.rstrip('/')
+        self.api_base = f"{self.base_url}/rest/api"
+        self.session = requests.Session()
+        
+        # Setup authentication
+        if token:
+            self.session.headers.update({'Authorization': f'Bearer {token}'})
+        elif api_token and username:
+            # Atlassian Cloud API token
+            auth_string = f"{username}:{api_token}"
+            b64_auth = base64.b64encode(auth_string.encode()).decode()
+            self.session.headers.update({'Authorization': f'Basic {b64_auth}'})
+        elif username and password:
+            self.session.auth = (username, password)
+        else:
+            logger.warning("No Confluence authentication provided - only public pages accessible")
+    
+    def get_page_content(self, page_id: str) -> Optional[Dict[str, Any]]:
+        """Get Confluence page content by ID."""
+        try:
+            url = f"{self.api_base}/content/{page_id}"
+            params = {
+                'expand': 'body.storage,space,version,ancestors'
+            }
+            
+            response = self.session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            return response.json()
+            
+        except Exception as e:
+            logger.error(f"Error fetching Confluence page {page_id}: {e}")
+            return None
+    
+    def get_page_by_title(self, space_key: str, title: str) -> Optional[Dict[str, Any]]:
+        """Get Confluence page by space and title."""
+        try:
+            url = f"{self.api_base}/content"
+            params = {
+                'type': 'page',
+                'spaceKey': space_key,
+                'title': title,
+                'expand': 'body.storage,space,version'
+            }
+            
+            response = self.session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data['results']:
+                return data['results'][0]
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error fetching Confluence page '{title}' in space '{space_key}': {e}")
+            return None
+    
+    def get_space_pages(self, space_key: str, limit: int = 25) -> List[Dict[str, Any]]:
+        """Get all pages in a Confluence space."""
+        try:
+            pages = []
+            start = 0
+            
+            while len(pages) < limit:
+                url = f"{self.api_base}/content"
+                params = {
+                    'type': 'page',
+                    'spaceKey': space_key,
+                    'expand': 'body.storage,space,version',
+                    'limit': min(50, limit - len(pages)),
+                    'start': start
+                }
+                
+                response = self.session.get(url, params=params, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+                
+                if not data['results']:
+                    break
+                    
+                pages.extend(data['results'])
+                start += len(data['results'])
+                
+                # Check if we've reached the end
+                if len(data['results']) < params['limit']:
+                    break
+            
+            return pages[:limit]
+            
+        except Exception as e:
+            logger.error(f"Error fetching pages from Confluence space '{space_key}': {e}")
+            return []
+    
+    def extract_page_id_from_url(self, url: str) -> Optional[str]:
+        """Extract page ID from various Confluence URL formats."""
+        try:
+            parsed = urlparse(url)
+            
+            # Standard page URL: /spaces/SPACE/pages/123456/Page+Title
+            if '/pages/' in parsed.path:
+                parts = parsed.path.split('/pages/')
+                if len(parts) > 1:
+                    page_part = parts[1].split('/')[0]
+                    if page_part.isdigit():
+                        return page_part
+            
+            # Direct page URL: /display/SPACE/Page+Title
+            if '/display/' in parsed.path:
+                # We'll need to resolve this via API using space and title
+                parts = parsed.path.split('/display/')
+                if len(parts) > 1:
+                    path_parts = parts[1].split('/', 1)
+                    if len(path_parts) == 2:
+                        space_key = path_parts[0]
+                        title = path_parts[1].replace('+', ' ')
+                        page_data = self.get_page_by_title(space_key, title)
+                        return page_data['id'] if page_data else None
+            
+            # Query parameter: ?pageId=123456
+            if parsed.query:
+                query_params = parse_qs(parsed.query)
+                if 'pageId' in query_params:
+                    return query_params['pageId'][0]
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error extracting page ID from Confluence URL {url}: {e}")
+            return None
+    
+    def is_confluence_url(self, url: str) -> bool:
+        """Check if URL is a Confluence page."""
+        try:
+            parsed = urlparse(url)
+            confluence_indicators = [
+                '/wiki/',
+                '/display/',
+                '/spaces/',
+                '/pages/',
+                'confluence' in parsed.netloc.lower(),
+                'atlassian.net' in parsed.netloc.lower()
+            ]
+            
+            return any(indicator in url.lower() for indicator in confluence_indicators)
+            
+        except Exception:
+            return False
+    
+    def convert_storage_to_text(self, storage_content: str) -> str:
+        """Convert Confluence storage format to plain text."""
+        try:
+            # Parse the storage format (XML-like)
+            soup = BeautifulSoup(storage_content, 'html.parser')
+            
+            # Remove unwanted elements
+            for element in soup.find_all(['ac:structured-macro', 'ac:parameter']):
+                element.decompose()
+            
+            # Extract text content
+            text = soup.get_text(separator='\n', strip=True)
+            
+            # Clean up extra whitespace
+            lines = [line.strip() for line in text.split('\n') if line.strip()]
+            return '\n'.join(lines)
+            
+        except Exception as e:
+            logger.error(f"Error converting Confluence storage format: {e}")
+            return storage_content
+
+
 class WebCrawler:
-    """Web crawler for recursive HTML link extraction and processing."""
+    """Web crawler for recursive HTML link extraction and processing with Confluence support."""
     
     def __init__(self, max_depth: int = 2, same_domain_only: bool = True, 
-                 max_pages: int = 50, delay: float = 1.0):
+                 max_pages: int = 50, delay: float = 1.0, confluence_config: Dict = None):
         """
         Initialize the web crawler.
         
@@ -50,6 +236,7 @@ class WebCrawler:
             same_domain_only: Only crawl within the same domain (default: True)
             max_pages: Maximum number of pages to crawl (default: 50)
             delay: Delay between requests in seconds (default: 1.0)
+            confluence_config: Confluence authentication config (optional)
         """
         self.max_depth = max_depth
         self.same_domain_only = same_domain_only
@@ -57,6 +244,17 @@ class WebCrawler:
         self.delay = delay
         self.visited_urls: Set[str] = set()
         self.discovered_urls: List[str] = []
+        
+        # Initialize Confluence client if config provided
+        self.confluence_client = None
+        if confluence_config:
+            self.confluence_client = ConfluenceClient(
+                base_url=confluence_config.get('base_url'),
+                username=confluence_config.get('username'),
+                password=confluence_config.get('password'),
+                token=confluence_config.get('token'),
+                api_token=confluence_config.get('api_token')
+            )
         
     def is_valid_url(self, url: str, base_domain: str = None) -> bool:
         """Check if URL is valid for crawling."""
@@ -90,7 +288,7 @@ class WebCrawler:
             return False
     
     def extract_links(self, url: str, html_content: str, base_domain: str) -> List[str]:
-        """Extract all valid links from HTML content."""
+        """Extract all valid links from HTML content, including Confluence links."""
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
             links = []
@@ -107,7 +305,10 @@ class WebCrawler:
                 # Clean URL (remove fragments for deduplication)
                 clean_url = absolute_url.split('#')[0]
                 
-                if self.is_valid_url(clean_url, base_domain):
+                # Special handling for Confluence links
+                if self.confluence_client and self.confluence_client.is_confluence_url(clean_url):
+                    links.append(clean_url)
+                elif self.is_valid_url(clean_url, base_domain):
                     links.append(clean_url)
                     
             return list(set(links))  # Remove duplicates
@@ -115,6 +316,44 @@ class WebCrawler:
         except Exception as e:
             logger.error(f"Error extracting links from {url}: {e}")
             return []
+    
+    def fetch_confluence_content(self, url: str) -> Optional[str]:
+        """Fetch content from Confluence URL."""
+        if not self.confluence_client:
+            logger.warning(f"Confluence client not configured, cannot fetch: {url}")
+            return None
+            
+        try:
+            page_id = self.confluence_client.extract_page_id_from_url(url)
+            if not page_id:
+                logger.warning(f"Could not extract page ID from Confluence URL: {url}")
+                return None
+                
+            page_data = self.confluence_client.get_page_content(page_id)
+            if not page_data:
+                return None
+                
+            # Extract content from storage format
+            body = page_data.get('body', {}).get('storage', {})
+            if body and 'value' in body:
+                content = self.confluence_client.convert_storage_to_text(body['value'])
+                
+                # Add metadata as text
+                title = page_data.get('title', '')
+                space_name = page_data.get('space', {}).get('name', '')
+                
+                full_content = f"Title: {title}\n"
+                if space_name:
+                    full_content += f"Space: {space_name}\n"
+                full_content += f"URL: {url}\n\n{content}"
+                
+                return full_content
+                
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error fetching Confluence content from {url}: {e}")
+            return None
     
     def crawl_recursive(self, root_urls: List[str]) -> List[str]:
         """
@@ -146,32 +385,59 @@ class WebCrawler:
             logger.info(f"Crawling: {current_url} (depth: {depth})")
             
             try:
-                # Fetch page content
-                response = requests.get(current_url, timeout=30)
-                response.raise_for_status()
-                
-                # Only process HTML content
-                content_type = response.headers.get('content-type', '').lower()
-                if 'text/html' not in content_type:
-                    logger.debug(f"Skipping non-HTML content: {current_url}")
-                    self.visited_urls.add(current_url)
-                    continue
-                
-                # Extract domain for filtering
-                base_domain = urlparse(current_url).netloc
-                
-                # Extract links if not at max depth
-                if depth < self.max_depth:
-                    links = self.extract_links(current_url, response.text, base_domain)
+                # Check if this is a Confluence URL and handle specially
+                if self.confluence_client and self.confluence_client.is_confluence_url(current_url):
+                    logger.info(f"Processing Confluence page: {current_url}")
                     
-                    # Add new links to crawl queue
-                    for link in links:
-                        if link not in self.visited_urls and link not in self.discovered_urls:
-                            to_crawl.append((link, depth + 1))
-                            self.discovered_urls.append(link)
-                            logger.debug(f"  Found link: {link}")
-                
-                self.visited_urls.add(current_url)
+                    # For Confluence pages, we don't need to fetch HTML - use API instead
+                    confluence_content = self.fetch_confluence_content(current_url)
+                    if confluence_content:
+                        # For Confluence pages, we might want to extract linked pages
+                        if depth < self.max_depth:
+                            # Try to get related pages or space pages
+                            page_id = self.confluence_client.extract_page_id_from_url(current_url)
+                            if page_id:
+                                page_data = self.confluence_client.get_page_content(page_id)
+                                if page_data and 'space' in page_data:
+                                    space_key = page_data['space']['key']
+                                    # Get other pages in the same space (limited)
+                                    space_pages = self.confluence_client.get_space_pages(space_key, limit=10)
+                                    for page in space_pages:
+                                        page_url = f"{self.confluence_client.base_url}/spaces/{space_key}/pages/{page['id']}"
+                                        if page_url not in self.visited_urls and page_url not in self.discovered_urls:
+                                            to_crawl.append((page_url, depth + 1))
+                                            self.discovered_urls.append(page_url)
+                                            logger.debug(f"  Found Confluence page: {page_url}")
+                    
+                    self.visited_urls.add(current_url)
+                    
+                else:
+                    # Regular HTML page processing
+                    response = requests.get(current_url, timeout=30)
+                    response.raise_for_status()
+                    
+                    # Only process HTML content
+                    content_type = response.headers.get('content-type', '').lower()
+                    if 'text/html' not in content_type:
+                        logger.debug(f"Skipping non-HTML content: {current_url}")
+                        self.visited_urls.add(current_url)
+                        continue
+                    
+                    # Extract domain for filtering
+                    base_domain = urlparse(current_url).netloc
+                    
+                    # Extract links if not at max depth
+                    if depth < self.max_depth:
+                        links = self.extract_links(current_url, response.text, base_domain)
+                        
+                        # Add new links to crawl queue
+                        for link in links:
+                            if link not in self.visited_urls and link not in self.discovered_urls:
+                                to_crawl.append((link, depth + 1))
+                                self.discovered_urls.append(link)
+                                logger.debug(f"  Found link: {link}")
+                    
+                    self.visited_urls.add(current_url)
                 
                 # Rate limiting
                 time.sleep(self.delay)
@@ -343,12 +609,19 @@ class IngestionService:
         
         # If crawling is enabled, use web crawler
         if enable_crawling:
+            # Get Confluence configuration if available
+            confluence_config = crawl_config.get('confluence', {})
+            
             crawler = WebCrawler(
                 max_depth=max_depth,
                 same_domain_only=same_domain_only,
                 max_pages=max_pages,
-                delay=crawl_delay
+                delay=crawl_delay,
+                confluence_config=confluence_config if confluence_config else None
             )
+            
+            # Store crawler reference for document processing
+            self.crawler = crawler
             
             # Separate HTML URLs for crawling vs direct document URLs
             html_urls = []
@@ -416,8 +689,8 @@ class IngestionService:
         return unique_urls
     
     def process_documents(self, sources: List[str]) -> List[LlamaStackDocument]:
-        """Process documents (files or URLs) into chunks using docling."""
-        logger.info(f"Processing {len(sources)} documents with docling...")
+        """Process documents (files or URLs) into chunks using docling or direct processing."""
+        logger.info(f"Processing {len(sources)} documents with docling and Confluence integration...")
         
         llama_documents = []
         doc_id = 0
@@ -432,29 +705,68 @@ class IngestionService:
                     source_name = os.path.basename(source)
                     logger.info(f"Processing file: {source_name}")
                 
-                # Convert document with docling (works with both URLs and file paths)
-                docling_doc = self.converter.convert(source=source).document
-                chunks = self.chunker.chunk(docling_doc)
-                chunk_count = 0
+                # Check if this is a Confluence URL that we've already processed
+                if hasattr(self, 'crawler') and self.crawler and \
+                   self.crawler.confluence_client and \
+                   self.crawler.confluence_client.is_confluence_url(source):
+                    
+                    # Fetch Confluence content directly
+                    logger.info(f"Processing Confluence page: {source}")
+                    confluence_content = self.crawler.fetch_confluence_content(source)
+                    
+                    if confluence_content:
+                        # Manual chunking for Confluence content
+                        chunk_size = 512  # tokens, approximate by words
+                        words = confluence_content.split()
+                        
+                        # Simple chunking by word count (approximate token count)
+                        for i in range(0, len(words), chunk_size):
+                            chunk_words = words[i:i + chunk_size]
+                            if len(chunk_words) > 10:  # Only meaningful chunks
+                                doc_id += 1
+                                chunk_text = ' '.join(chunk_words)
+                                
+                                llama_documents.append(
+                                    LlamaStackDocument(
+                                        document_id=f"confluence-{doc_id}",
+                                        content=chunk_text,
+                                        mime_type="text/plain",
+                                        metadata={
+                                            "source": source,
+                                            "type": "confluence",
+                                            "source_name": source_name
+                                        },
+                                    )
+                                )
+                        
+                        logger.info(f"  → Created {len([d for d in llama_documents if d.metadata.get('source') == source])} Confluence chunks")
+                    else:
+                        logger.warning(f"Could not fetch Confluence content from: {source}")
                 
-                # Extract text chunks
-                for chunk in chunks:
-                    if any(
-                        c.label in [DocItemLabel.TEXT, DocItemLabel.PARAGRAPH]
-                        for c in chunk.meta.doc_items
-                    ):
-                        doc_id += 1
-                        chunk_count += 1
-                        llama_documents.append(
-                            LlamaStackDocument(
-                                document_id=f"doc-{doc_id}",
-                                content=chunk.text,
-                                mime_type="text/plain",
-                                metadata={"source": source_name},
+                else:
+                    # Use Docling for regular documents (PDF, HTML, DOCX, PPTX, etc.)
+                    docling_doc = self.converter.convert(source=source).document
+                    chunks = self.chunker.chunk(docling_doc)
+                    chunk_count = 0
+                    
+                    # Extract text chunks
+                    for chunk in chunks:
+                        if any(
+                            c.label in [DocItemLabel.TEXT, DocItemLabel.PARAGRAPH]
+                            for c in chunk.meta.doc_items
+                        ):
+                            doc_id += 1
+                            chunk_count += 1
+                            llama_documents.append(
+                                LlamaStackDocument(
+                                    document_id=f"doc-{doc_id}",
+                                    content=chunk.text,
+                                    mime_type="text/plain",
+                                    metadata={"source": source_name, "type": "document"},
+                                )
                             )
-                        )
-                
-                logger.info(f"  → Created {chunk_count} chunks")
+                    
+                    logger.info(f"  → Created {chunk_count} document chunks")
             
             except Exception as e:
                 logger.error(f"Error processing {source}: {e}")
