@@ -21,6 +21,56 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def test_space_discovery():
+    """Test Confluence space discovery functionality."""
+    print(f"\n🏢 Testing Space Discovery")
+    print("=" * 30)
+    
+    # Test space URLs
+    test_space_urls = [
+        "https://cwiki.apache.org/confluence/display/KAFKA/Home",
+        "https://your-company.atlassian.net/wiki/spaces/ENG/overview",
+        "https://company.atlassian.net/wiki/spaces/HR/pages/viewspace.action",
+    ]
+    
+    # Create client for testing (minimal config)
+    client = ConfluenceClient(base_url="https://cwiki.apache.org/confluence")
+    
+    for url in test_space_urls:
+        print(f"\n📍 Testing: {url}")
+        
+        # Test space detection
+        is_space = client.is_space_url(url)
+        print(f"   Is space URL: {is_space}")
+        
+        # Test space key extraction
+        space_key = client.extract_space_key_from_url(url)
+        if space_key:
+            print(f"   ✅ Space key: {space_key}")
+            
+            # For public Confluence, try to get space info
+            if "cwiki.apache.org" in url:
+                space_info = client.get_space_info(space_key)
+                if space_info:
+                    print(f"   ✅ Space name: {space_info.get('name', 'Unknown')}")
+                    print(f"   📄 Space description: {space_info.get('description', {}).get('plain', 'No description')[:100]}...")
+                    
+                    # Try to discover some pages
+                    print(f"   🔍 Discovering pages in space...")
+                    pages = client.get_space_pages(space_key, limit=5, include_attachments=False)
+                    print(f"   📄 Found {len(pages)} pages/items")
+                    
+                    for i, page in enumerate(pages[:3]):  # Show first 3
+                        content_type = page.get('content_type', 'page')
+                        title = page.get('title', 'Unknown')
+                        print(f"      {i+1}. [{content_type.upper()}] {title}")
+                else:
+                    print(f"   ❌ Could not get space info (may require auth)")
+            else:
+                print(f"   ⚠️  Skipping detailed discovery (requires authentication)")
+        else:
+            print(f"   ❌ Could not extract space key")
+
 def test_confluence_client():
     """Test Confluence client with different authentication methods."""
     
@@ -37,12 +87,19 @@ def test_confluence_client():
             "test_urls": [
                 "https://your-domain.atlassian.net/wiki/spaces/SPACE/pages/123456/Test+Page",
                 "https://your-domain.atlassian.net/wiki/display/SPACE/Test+Page"
+            ],
+            "space_urls": [
+                "https://your-domain.atlassian.net/wiki/spaces/ENG/overview",
+                "https://your-domain.atlassian.net/wiki/spaces/HR/overview"
             ]
         },
         {
             "name": "Public Confluence (no auth)",
-            "base_url": "https://cwiki.apache.org",
+            "base_url": "https://cwiki.apache.org/confluence",
             "test_urls": [
+                "https://cwiki.apache.org/confluence/display/KAFKA/Home"
+            ],
+            "space_urls": [
                 "https://cwiki.apache.org/confluence/display/KAFKA/Home"
             ]
         }
