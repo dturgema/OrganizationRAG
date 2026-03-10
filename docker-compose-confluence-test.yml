@@ -1,0 +1,108 @@
+# Docker Compose for Testing Confluence Integration
+# Minimal setup to test the enhanced Confluence client
+version: '3.8'
+
+services:
+  # PostgreSQL with PGVector for embeddings
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: confluence-test-db
+    environment:
+      POSTGRES_DB: confluence_test
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5433:5432"
+    volumes:
+      - confluence_test_data:/var/lib/postgresql/data
+    networks:
+      - test-network
+
+  # LlamaStack for embedding generation (OpenAI compatible)
+  llamastack:
+    image: llamastack/distribution-ollama:latest
+    container_name: confluence-test-llamastack
+    environment:
+      # Use external OpenAI or configure Ollama
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      INFERENCE_MODEL: "${INFERENCE_MODEL:-gpt-4o-mini}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-text-embedding-3-small}"
+      # Database connection
+      PGVECTOR_HOST: pgvector
+      PGVECTOR_PORT: 5432
+      PGVECTOR_DB: confluence_test
+      PGVECTOR_USER: testuser
+      PGVECTOR_PASSWORD: testpass
+    ports:
+      - "8322:8321"
+    depends_on:
+      - pgvector
+    networks:
+      - test-network
+
+  # Enhanced Ingestion Service for Confluence Testing
+  confluence-ingestion:
+    build:
+      context: .
+      dockerfile: ingestion-service/Containerfile.enhanced
+    container_name: confluence-test-ingestion
+    environment:
+      # Ingestion configuration
+      - INGESTION_CONFIG=/config/ingestion-config.yaml
+      - LOG_LEVEL=DEBUG
+      - MAX_WORKERS=2
+      # Database connection
+      - PGVECTOR_HOST=pgvector
+      - PGVECTOR_PORT=5432
+      - PGVECTOR_DB=confluence_test
+      - PGVECTOR_USER=testuser
+      - PGVECTOR_PASSWORD=testpass
+      - LLAMASTACK_URL=http://llamastack:8321
+      # Confluence authentication (set these in .env file)
+      - CONFLUENCE_BASE_URL=${CONFLUENCE_BASE_URL:-}
+      - CONFLUENCE_USERNAME=${CONFLUENCE_USERNAME:-}
+      - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN:-}
+    volumes:
+      # Use the working Confluence configuration
+      - ./ingestion-config-confluence-working.yaml:/config/ingestion-config.yaml:ro
+      - ./confluence-test.py:/app/test-confluence.py:ro
+      - confluence_logs:/app/logs
+      - confluence_temp:/app/temp
+    depends_on:
+      - llamastack
+      - pgvector
+    networks:
+      - test-network
+    # Don't auto-restart for testing
+    restart: "no"
+
+  # Simple test runner
+  confluence-test:
+    build:
+      context: .
+      dockerfile: ingestion-service/Containerfile.enhanced
+    container_name: confluence-test-runner
+    environment:
+      - CONFLUENCE_BASE_URL=${CONFLUENCE_BASE_URL:-https://cwiki.apache.org/confluence}
+      - CONFLUENCE_USERNAME=${CONFLUENCE_USERNAME:-}
+      - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN:-}
+    volumes:
+      - ./confluence-test.py:/app/confluence-test.py:ro
+    working_dir: /app
+    command: ["python", "confluence-test.py"]
+    networks:
+      - test-network
+    restart: "no"
+
+volumes:
+  confluence_test_data:
+    driver: local
+  confluence_logs:
+    driver: local
+  confluence_temp:
+    driver: local
+
+networks:
+  test-network:
+    driver: bridge

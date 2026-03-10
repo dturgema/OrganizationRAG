@@ -40,36 +40,82 @@ logger = logging.getLogger(__name__)
 
 
 class ConfluenceClient:
-    """Confluence API client for accessing Confluence pages and spaces."""
+    """Enhanced Confluence API client for accessing Confluence pages and spaces."""
     
     def __init__(self, base_url: str, username: str = None, password: str = None, 
                  token: str = None, api_token: str = None):
         """
-        Initialize Confluence client.
+        Initialize Confluence client with robust authentication.
         
         Args:
             base_url: Confluence base URL (e.g., https://company.atlassian.net)
-            username: Username for basic auth
+            username: Username for basic auth or email for API token
             password: Password for basic auth  
-            token: Personal Access Token
+            token: Personal Access Token (for Server/Data Center)
             api_token: API token for Atlassian Cloud
         """
         self.base_url = base_url.rstrip('/')
         self.api_base = f"{self.base_url}/rest/api"
         self.session = requests.Session()
         
-        # Setup authentication
-        if token:
-            self.session.headers.update({'Authorization': f'Bearer {token}'})
-        elif api_token and username:
-            # Atlassian Cloud API token
+        # Enhanced session configuration
+        self.session.headers.update({
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'User-Agent': 'RAG-Ingestion-Service/2.0'
+        })
+        
+        # Setup authentication with better error handling
+        if api_token and username:
+            # Atlassian Cloud API token (recommended)
             auth_string = f"{username}:{api_token}"
             b64_auth = base64.b64encode(auth_string.encode()).decode()
             self.session.headers.update({'Authorization': f'Basic {b64_auth}'})
+            logger.info(f"Confluence client initialized with API token for user: {username}")
+        elif token:
+            # Personal Access Token for Server/Data Center
+            self.session.headers.update({'Authorization': f'Bearer {token}'})
+            logger.info("Confluence client initialized with Personal Access Token")
         elif username and password:
+            # Basic authentication (legacy)
             self.session.auth = (username, password)
+            logger.info(f"Confluence client initialized with basic auth for user: {username}")
         else:
             logger.warning("No Confluence authentication provided - only public pages accessible")
+        
+        # Test connection on initialization
+        self._test_connection()
+    
+    def _test_connection(self) -> bool:
+        """Test Confluence API connection and authentication."""
+        try:
+            # Test with a simple API call to get current user info
+            url = f"{self.api_base}/user/current"
+            response = self.session.get(url, timeout=10)
+            
+            if response.status_code == 200:
+                user_data = response.json()
+                logger.info(f"Confluence connection successful. User: {user_data.get('displayName', 'Unknown')}")
+                return True
+            elif response.status_code == 401:
+                logger.error("Confluence authentication failed - check credentials")
+                return False
+            elif response.status_code == 403:
+                logger.warning("Confluence authenticated but limited permissions")
+                return True  # Still usable
+            else:
+                logger.warning(f"Confluence API returned status: {response.status_code}")
+                return True  # Try to continue anyway
+                
+        except requests.exceptions.Timeout:
+            logger.error("Confluence connection timeout - check URL and network")
+            return False
+        except requests.exceptions.ConnectionError:
+            logger.error("Confluence connection error - check base URL")
+            return False
+        except Exception as e:
+            logger.error(f"Confluence connection test failed: {e}")
+            return False
     
     def get_page_content(self, page_id: str) -> Optional[Dict[str, Any]]:
         """Get Confluence page content by ID."""
@@ -147,40 +193,68 @@ class ConfluenceClient:
             return []
     
     def extract_page_id_from_url(self, url: str) -> Optional[str]:
-        """Extract page ID from various Confluence URL formats."""
+        """Extract page ID from various Confluence URL formats with enhanced support."""
         try:
             parsed = urlparse(url)
             
-            # Standard page URL: /spaces/SPACE/pages/123456/Page+Title
-            if '/pages/' in parsed.path:
-                parts = parsed.path.split('/pages/')
-                if len(parts) > 1:
-                    page_part = parts[1].split('/')[0]
-                    if page_part.isdigit():
-                        return page_part
-            
-            # Direct page URL: /display/SPACE/Page+Title
-            if '/display/' in parsed.path:
-                # We'll need to resolve this via API using space and title
-                parts = parsed.path.split('/display/')
-                if len(parts) > 1:
-                    path_parts = parts[1].split('/', 1)
-                    if len(path_parts) == 2:
-                        space_key = path_parts[0]
-                        title = path_parts[1].replace('+', ' ')
-                        page_data = self.get_page_by_title(space_key, title)
-                        return page_data['id'] if page_data else None
-            
-            # Query parameter: ?pageId=123456
+            logger.debug(f"Parsing Confluence URL: {url}")
+
+            # Method 1: Standard page URL formats
+            # /wiki/spaces/SPACE/pages/123456/Page+Title
+            # /spaces/SPACE/pages/123456/Page+Title
+            import re
+            page_patterns = [r'/pages/(\d+)/', r'/pages/(\d+)$']
+            for pattern in page_patterns:
+                match = re.search(pattern, parsed.path)
+                if match:
+                    page_id = match.group(1)
+                    logger.debug(f"Extracted page ID from path: {page_id}")
+                    return page_id
+
+            # Method 2: Query parameters (pageId, id)
             if parsed.query:
                 query_params = parse_qs(parsed.query)
-                if 'pageId' in query_params:
-                    return query_params['pageId'][0]
-            
+                for param_name in ['pageId', 'id', 'contentId']:
+                    if param_name in query_params:
+                        page_id = query_params[param_name][0]
+                        logger.debug(f"Extracted page ID from {param_name} parameter: {page_id}")
+                        return page_id
+
+            # Method 3: Display URL format - resolve to get page ID
+            # /wiki/display/SPACE/Page+Title
+            # /display/SPACE/Page+Title
+            if '/display/' in parsed.path:
+                display_parts = parsed.path.split('/display/')
+                if len(display_parts) > 1:
+                    path_info = display_parts[1]
+                    parts = path_info.split('/', 1)
+                    if len(parts) >= 2:
+                        space_key = parts[0]
+                        page_title = parts[1].replace('+', ' ')
+                        logger.debug(f"Trying to resolve display URL - Space: {space_key}, Title: {page_title}")
+                        
+                        # Try to get page by space and title
+                        page_data = self.get_page_by_title(space_key, page_title)
+                        if page_data:
+                            page_id = page_data.get('id')
+                            logger.debug(f"Resolved display URL to page ID: {page_id}")
+                            return page_id
+
+            # Method 4: API endpoint URL
+            # /rest/api/content/123456
+            if '/rest/api/content/' in parsed.path:
+                content_parts = parsed.path.split('/rest/api/content/')
+                if len(content_parts) > 1:
+                    content_id = content_parts[1].split('/')[0]
+                    if content_id.isdigit():
+                        logger.debug(f"Extracted page ID from API URL: {content_id}")
+                        return content_id
+
+            logger.warning(f"Could not extract page ID from URL: {url}")
             return None
-            
+
         except Exception as e:
-            logger.error(f"Error extracting page ID from Confluence URL {url}: {e}")
+            logger.error(f"Error extracting page ID from URL {url}: {e}")
             return None
     
     def is_confluence_url(self, url: str) -> bool:
@@ -202,21 +276,135 @@ class ConfluenceClient:
             return False
     
     def convert_storage_to_text(self, storage_content: str) -> str:
-        """Convert Confluence storage format to plain text."""
+        """Convert Confluence storage format to well-structured plain text."""
         try:
-            # Parse the storage format (XML-like)
-            soup = BeautifulSoup(storage_content, 'html.parser')
+            # Parse the Confluence storage format (XHTML + custom namespaces)
+            soup = BeautifulSoup(storage_content, 'xml')
             
-            # Remove unwanted elements
-            for element in soup.find_all(['ac:structured-macro', 'ac:parameter']):
-                element.decompose()
+            # Handle Confluence macros and structured content
+            self._process_confluence_macros(soup)
             
-            # Extract text content
-            text = soup.get_text(separator='\n', strip=True)
+            # Convert to more standard HTML-like structure
+            html_soup = BeautifulSoup(str(soup), 'html.parser')
             
-            # Clean up extra whitespace
-            lines = [line.strip() for line in text.split('\n') if line.strip()]
+            # Process different content types
+            text_parts = []
+            
+            # Extract headings with proper formatting
+            for heading in html_soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                level = int(heading.name[1])
+                prefix = '#' * level
+                text_parts.append(f"\n{prefix} {heading.get_text().strip()}\n")
+                heading.decompose()
+            
+            # Extract lists with proper formatting
+            for ul in html_soup.find_all('ul'):
+                for li in ul.find_all('li'):
+                    text_parts.append(f"• {li.get_text().strip()}")
+                text_parts.append("")  # Empty line after list
+                ul.decompose()
+            
+            for ol in html_soup.find_all('ol'):
+                for i, li in enumerate(ol.find_all('li'), 1):
+                    text_parts.append(f"{i}. {li.get_text().strip()}")
+                text_parts.append("")  # Empty line after list
+                ol.decompose()
+            
+            # Extract tables with basic formatting
+            for table in html_soup.find_all('table'):
+                text_parts.append("\n[TABLE]")
+                for row in table.find_all('tr'):
+                    cells = [cell.get_text().strip() for cell in row.find_all(['td', 'th'])]
+                    if cells:
+                        text_parts.append(" | ".join(cells))
+                text_parts.append("[/TABLE]\n")
+                table.decompose()
+            
+            # Extract code blocks
+            for code in html_soup.find_all(['code', 'pre']):
+                code_text = code.get_text().strip()
+                if code_text:
+                    text_parts.append(f"\n```\n{code_text}\n```\n")
+                code.decompose()
+            
+            # Extract remaining text content
+            remaining_text = html_soup.get_text(separator=' ', strip=True)
+            if remaining_text:
+                text_parts.append(remaining_text)
+            
+            # Clean up and join
+            result = '\n'.join(text_parts)
+            
+            # Clean up extra whitespace while preserving intentional formatting
+            lines = []
+            for line in result.split('\n'):
+                line = line.strip()
+                # Keep empty lines that serve as separators
+                if line or (lines and lines[-1]):
+                    lines.append(line)
+            
             return '\n'.join(lines)
+            
+        except Exception as e:
+            logger.error(f"Error converting Confluence storage format: {e}")
+            # Fallback to basic text extraction
+            try:
+                soup = BeautifulSoup(storage_content, 'html.parser')
+                return soup.get_text(separator='\n', strip=True)
+            except:
+                return storage_content  # Last resort
+    
+    def _process_confluence_macros(self, soup):
+        """Process Confluence-specific macros and structured content."""
+        try:
+            # Handle info/note/warning panels
+            for macro in soup.find_all('ac:structured-macro', {'ac:name': ['info', 'note', 'warning', 'tip']}):
+                macro_type = macro.get('ac:name', 'info').upper()
+                body = macro.find('ac:rich-text-body')
+                if body:
+                    content = body.get_text().strip()
+                    if content:
+                        new_content = soup.new_tag('div')
+                        new_content.string = f"[{macro_type}] {content}"
+                        macro.replace_with(new_content)
+                else:
+                    macro.decompose()
+            
+            # Handle code macros
+            for macro in soup.find_all('ac:structured-macro', {'ac:name': 'code'}):
+                body = macro.find('ac:plain-text-body')
+                if body:
+                    code_content = body.get_text()
+                    new_code = soup.new_tag('pre')
+                    new_code.string = code_content
+                    macro.replace_with(new_code)
+                else:
+                    macro.decompose()
+            
+            # Handle links
+            for link in soup.find_all('ac:link'):
+                link_text = link.get_text().strip()
+                if link_text:
+                    new_link = soup.new_tag('a')
+                    new_link.string = link_text
+                    link.replace_with(new_link)
+                else:
+                    link.decompose()
+            
+            # Remove other complex macros but preserve their text content
+            for macro in soup.find_all('ac:structured-macro'):
+                body = macro.find(['ac:rich-text-body', 'ac:plain-text-body'])
+                if body:
+                    macro.replace_with(body)
+                else:
+                    macro.decompose()
+            
+            # Remove parameter elements
+            for param in soup.find_all('ac:parameter'):
+                param.decompose()
+                
+        except Exception as e:
+            logger.warning(f"Error processing Confluence macros: {e}")
             
         except Exception as e:
             logger.error(f"Error converting Confluence storage format: {e}")

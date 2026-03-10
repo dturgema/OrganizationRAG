@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""
+Confluence Integration Test Script
+Tests the enhanced Confluence client to verify it can fetch and parse pages.
+"""
+
+import os
+import sys
+import logging
+from urllib.parse import urlparse
+
+# Add the ingestion-service directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'ingestion-service'))
+
+from ingest import ConfluenceClient
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+def test_confluence_client():
+    """Test Confluence client with different authentication methods."""
+    
+    print("🔍 Testing Confluence Integration")
+    print("=" * 50)
+    
+    # Test configuration - replace with your actual values
+    test_configs = [
+        {
+            "name": "Atlassian Cloud with API Token",
+            "base_url": os.getenv("CONFLUENCE_BASE_URL", "https://your-domain.atlassian.net"),
+            "username": os.getenv("CONFLUENCE_USERNAME", "your-email@company.com"),
+            "api_token": os.getenv("CONFLUENCE_API_TOKEN"),
+            "test_urls": [
+                "https://your-domain.atlassian.net/wiki/spaces/SPACE/pages/123456/Test+Page",
+                "https://your-domain.atlassian.net/wiki/display/SPACE/Test+Page"
+            ]
+        },
+        {
+            "name": "Public Confluence (no auth)",
+            "base_url": "https://cwiki.apache.org",
+            "test_urls": [
+                "https://cwiki.apache.org/confluence/display/KAFKA/Home"
+            ]
+        }
+    ]
+    
+    for config in test_configs:
+        print(f"\n📝 Testing: {config['name']}")
+        print("-" * 30)
+        
+        # Skip if required credentials not provided
+        if config.get("api_token") and not config["api_token"]:
+            print("⏭️  Skipping - no API token provided")
+            continue
+            
+        try:
+            # Initialize client
+            client = ConfluenceClient(
+                base_url=config["base_url"],
+                username=config.get("username"),
+                api_token=config.get("api_token")
+            )
+            
+            # Test URL parsing
+            test_urls = config.get("test_urls", [])
+            for url in test_urls:
+                print(f"\n🔗 Testing URL: {url}")
+                
+                # Test page ID extraction
+                page_id = client.extract_page_id_from_url(url)
+                if page_id:
+                    print(f"✅ Extracted page ID: {page_id}")
+                    
+                    # Test content fetching
+                    page_data = client.get_page_content(page_id)
+                    if page_data:
+                        print(f"✅ Fetched page: {page_data.get('title', 'Unknown')}")
+                        
+                        # Test content conversion
+                        body = page_data.get('body', {}).get('storage', {})
+                        if body and 'value' in body:
+                            text_content = client.convert_storage_to_text(body['value'])
+                            word_count = len(text_content.split())
+                            print(f"✅ Converted to text: {word_count} words")
+                            
+                            # Show preview
+                            preview = text_content[:200] + "..." if len(text_content) > 200 else text_content
+                            print(f"📄 Preview: {preview}")
+                        else:
+                            print("⚠️  No content body found")
+                    else:
+                        print("❌ Failed to fetch page data")
+                else:
+                    print("❌ Could not extract page ID from URL")
+                    
+        except Exception as e:
+            print(f"❌ Error testing {config['name']}: {e}")
+    
+    print(f"\n🎯 Test Configuration Help:")
+    print("To test with your Confluence instance, set these environment variables:")
+    print("export CONFLUENCE_BASE_URL='https://your-domain.atlassian.net'")
+    print("export CONFLUENCE_USERNAME='your-email@company.com'")
+    print("export CONFLUENCE_API_TOKEN='your-api-token'")
+    print("\nGet API token from: https://id.atlassian.com/manage-profile/security/api-tokens")
+
+def test_url_parsing():
+    """Test various Confluence URL formats."""
+    print(f"\n🔗 Testing URL Parsing")
+    print("=" * 30)
+    
+    # Create a minimal client for URL testing
+    client = ConfluenceClient(base_url="https://test.atlassian.net")
+    
+    test_urls = [
+        "https://company.atlassian.net/wiki/spaces/ENG/pages/123456/Development+Guidelines",
+        "https://company.atlassian.net/wiki/display/ENG/Development+Guidelines",
+        "https://company.atlassian.net/wiki/pages/viewpage.action?pageId=123456",
+        "https://company.atlassian.net/rest/api/content/123456",
+        "https://cwiki.apache.org/confluence/display/KAFKA/Home"
+    ]
+    
+    for url in test_urls:
+        print(f"\n📍 URL: {url}")
+        page_id = client.extract_page_id_from_url(url)
+        if page_id:
+            print(f"   ✅ Page ID: {page_id}")
+        else:
+            print(f"   ❌ Could not extract page ID")
+
+if __name__ == "__main__":
+    print("🚀 Confluence Integration Test Suite")
+    print("=====================================")
+    
+    # Test URL parsing first (no auth required)
+    test_url_parsing()
+    
+    # Test full integration
+    test_confluence_client()
+    
+    print(f"\n✨ Test completed!")

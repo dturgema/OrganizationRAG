@@ -1,0 +1,108 @@
+# Working Confluence Integration Configuration
+# This configuration has been tested and verified to work with the enhanced Confluence client
+
+llamastack:
+  base_url: "http://llamastack:8321"
+  
+vector_db:
+  embedding_model: "all-MiniLM-L6-v2"
+  embedding_dimension: 384
+  chunk_size_in_tokens: 512
+
+pipelines:
+  # Test with Apache Kafka Documentation (Public Confluence)
+  apache-kafka-docs:
+    enabled: true
+    name: "apache-kafka-docs"
+    version: "1.0"
+    vector_store_name: "apache-kafka-docs-v1-0"
+    source: URL
+    config:
+      urls:
+        # Public Confluence - no authentication required
+        - "https://cwiki.apache.org/confluence/display/KAFKA/Home"
+        - "https://cwiki.apache.org/confluence/display/KAFKA/Kafka+Improvement+Proposals"
+      
+      crawl:
+        enabled: true
+        max_depth: 2
+        same_domain_only: true
+        max_pages: 20
+        delay: 2.0  # Be respectful to public servers
+        
+        confluence:
+          base_url: "https://cwiki.apache.org/confluence"
+          # No authentication for public Confluence
+
+  # Your Company Confluence (Requires Authentication)
+  company-confluence:
+    enabled: false  # Set to true after configuring authentication
+    name: "company-confluence"
+    version: "1.0"
+    vector_store_name: "company-confluence-v1-0"
+    source: URL
+    config:
+      urls:
+        # Replace with your actual Confluence URLs
+        - "https://your-company.atlassian.net/wiki/spaces/ENG/overview"
+        - "https://your-company.atlassian.net/wiki/spaces/HR/pages/123456/Employee+Handbook"
+      
+      crawl:
+        enabled: true
+        max_depth: 3
+        same_domain_only: true
+        max_pages: 50
+        delay: 1.5
+        
+        confluence:
+          base_url: "https://your-company.atlassian.net"
+          username: "${CONFLUENCE_USERNAME}"      # your-email@company.com
+          api_token: "${CONFLUENCE_API_TOKEN}"    # Get from Atlassian
+          
+  # Mixed Documentation (Web + Confluence)
+  mixed-docs:
+    enabled: false
+    name: "mixed-docs"
+    version: "1.0" 
+    vector_store_name: "mixed-docs-v1-0"
+    source: URL
+    config:
+      urls:
+        # Regular web documentation
+        - "https://docs.python.org/3/tutorial/"
+        # Confluence pages
+        - "https://your-company.atlassian.net/wiki/spaces/DEV/overview"
+        # PDFs
+        - "https://example.com/documentation.pdf"
+      
+      crawl:
+        enabled: true
+        max_depth: 2
+        same_domain_only: false  # Allow multiple domains
+        max_pages: 75
+        delay: 1.0
+        
+        confluence:
+          base_url: "https://your-company.atlassian.net"
+          username: "${CONFLUENCE_USERNAME}"
+          api_token: "${CONFLUENCE_API_TOKEN}"
+
+# Environment Variables to Set:
+# For Atlassian Cloud (Recommended):
+#   export CONFLUENCE_USERNAME="your-email@company.com"  
+#   export CONFLUENCE_API_TOKEN="your-api-token-from-atlassian"
+#
+# For Server/Data Center:
+#   export CONFLUENCE_USERNAME="your-username"
+#   export CONFLUENCE_PAT="your-personal-access-token"
+
+# Testing Instructions:
+# 1. First test with public Confluence (apache-kafka-docs pipeline)
+# 2. Then configure your company credentials and test company-confluence
+# 3. Run: python confluence-test.py
+
+# Troubleshooting:
+# - Check authentication by testing API endpoints directly
+# - Verify base URL format (with or without /wiki)
+# - Check network connectivity to Confluence instance
+# - Review logs for detailed error messages

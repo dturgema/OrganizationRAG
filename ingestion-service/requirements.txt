@@ -5,12 +5,12 @@ requests>=2.31.0
 # Docling for multi-format document processing (PDF, HTML, DOCX, PPTX)
 docling>=2.0.0
 docling-core>=2.0.0
-# Web crawling dependencies for recursive HTML processing
+# Web crawling and HTML parsing dependencies
 beautifulsoup4>=4.12.0
-lxml>=4.9.0
+lxml>=4.9.0  # Required for XML parsing of Confluence storage format
 urllib3>=1.26.0
-# Confluence API integration
-atlassian-python-api>=3.41.0
+# Note: atlassian-python-api dependency available but custom client implementation used
+# atlassian-python-api>=3.41.0
 GitPython>=3.1.40
 # Explicitly avoid CUDA dependencies for CPU-only deployment
 --extra-index-url https://download.pytorch.org/whl/cpu
