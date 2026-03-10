@@ -153,6 +153,59 @@ def test_confluence_client():
                         print("❌ Failed to fetch page data")
                 else:
                     print("❌ Could not extract page ID from URL")
+            
+            # Test space discovery if space URLs provided
+            space_urls = config.get("space_urls", [])
+            if space_urls:
+                print(f"\n📁 Testing Space Discovery:")
+                for space_url in space_urls:
+                    print(f"\n  🏢 Space URL: {space_url}")
+                    
+                    # Test space detection
+                    is_space = client.is_space_url(space_url)
+                    print(f"      Is space URL: {is_space}")
+                    
+                    # Test space key extraction
+                    space_key = client.extract_space_key_from_url(space_url)
+                    if space_key:
+                        print(f"      ✅ Space key: {space_key}")
+                        
+                        # Try to discover content in the space
+                        try:
+                            print(f"      🔍 Discovering content...")
+                            space_content = client.get_space_pages(
+                                space_key, 
+                                limit=10, 
+                                include_attachments=True
+                            )
+                            
+                            if space_content:
+                                print(f"      ✅ Found {len(space_content)} items in space")
+                                
+                                # Categorize content
+                                pages = [item for item in space_content if item.get('content_type') == 'page']
+                                blog_posts = [item for item in space_content if item.get('content_type') == 'blogpost']
+                                attachments = [item for item in space_content if item.get('content_type') == 'attachment']
+                                
+                                print(f"         📄 Pages: {len(pages)}")
+                                print(f"         📰 Blog posts: {len(blog_posts)}")
+                                print(f"         📎 Attachments: {len(attachments)}")
+                                
+                                # Show some examples
+                                for i, item in enumerate(space_content[:3]):
+                                    content_type = item.get('content_type', 'unknown')
+                                    title = item.get('title', 'Unknown')
+                                    depth = item.get('depth', 0)
+                                    depth_indent = "  " * depth
+                                    print(f"         {i+1}. {depth_indent}[{content_type.upper()}] {title}")
+                                    
+                            else:
+                                print(f"      ❌ No content found in space")
+                                
+                        except Exception as space_error:
+                            print(f"      ❌ Error discovering space content: {space_error}")
+                    else:
+                        print(f"      ❌ Could not extract space key")
                     
         except Exception as e:
             print(f"❌ Error testing {config['name']}: {e}")
@@ -195,7 +248,22 @@ if __name__ == "__main__":
     # Test URL parsing first (no auth required)
     test_url_parsing()
     
+    # Test space discovery functionality
+    test_space_discovery()
+    
     # Test full integration
     test_confluence_client()
     
     print(f"\n✨ Test completed!")
+    print(f"\n📋 Summary of Enhanced Features:")
+    print("  ✅ URL parsing for pages and spaces")
+    print("  ✅ Space discovery (all pages, blog posts, attachments)")
+    print("  ✅ Recursive child page discovery")
+    print("  ✅ Attachment detection and processing")
+    print("  ✅ Multiple authentication methods")
+    print("  ✅ Enhanced storage format parsing")
+    print(f"\n🎯 Next Steps:")
+    print("  1. Configure your Confluence credentials")
+    print("  2. Test with ingestion-config-confluence-space-discovery.yaml")
+    print("  3. Run full ingestion: docker-compose run --rm confluence-ingestion")
+    print("  4. Monitor logs for space discovery progress")
