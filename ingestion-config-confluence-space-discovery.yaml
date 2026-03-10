@@ -1,0 +1,186 @@
+# Enhanced Confluence Space Discovery Configuration
+# This configuration demonstrates how to ingest ALL documents from Confluence spaces
+
+llamastack:
+  base_url: "http://llamastack:8321"
+  
+vector_db:
+  embedding_model: "all-MiniLM-L6-v2"
+  embedding_dimension: 384
+  chunk_size_in_tokens: 512
+
+pipelines:
+  # Comprehensive Space Ingestion - All Documents in Engineering Space
+  engineering-space-full:
+    enabled: true
+    name: "engineering-space-full"
+    version: "1.0"
+    vector_store_name: "engineering-space-full-v1-0"
+    source: URL
+    config:
+      urls:
+        # Space overview URL - will discover ALL documents in the space
+        - "https://company.atlassian.net/wiki/spaces/ENG/overview"
+      
+      crawl:
+        enabled: true
+        max_depth: 4        # Deep crawling for comprehensive discovery
+        same_domain_only: true
+        max_pages: 500      # Increase limit for large spaces
+        delay: 1.5          # Respectful crawling
+        
+        confluence:
+          base_url: "https://company.atlassian.net"
+          username: "${CONFLUENCE_USERNAME}"
+          api_token: "${CONFLUENCE_API_TOKEN}"
+          
+          # Space discovery settings
+          include_attachments: true    # Include PDF, DOCX, PPTX attachments
+          max_child_depth: 3          # How deep to go in page hierarchies
+          include_blog_posts: true    # Include blog posts in addition to pages
+  
+  # HR Knowledge Base - Complete Space Ingestion  
+  hr-knowledge-base:
+    enabled: true
+    name: "hr-knowledge-base"
+    version: "1.0"
+    vector_store_name: "hr-knowledge-base-v1-0"
+    source: URL
+    config:
+      urls:
+        # Multiple space overview URLs
+        - "https://company.atlassian.net/wiki/spaces/HR/overview"
+        - "https://company.atlassian.net/wiki/spaces/BENEFITS/overview"
+        - "https://company.atlassian.net/wiki/spaces/POLICIES/overview"
+      
+      crawl:
+        enabled: true
+        max_depth: 3
+        same_domain_only: true
+        max_pages: 200
+        delay: 2.0
+        
+        confluence:
+          base_url: "https://company.atlassian.net"
+          username: "${CONFLUENCE_USERNAME}"
+          api_token: "${CONFLUENCE_API_TOKEN}"
+          include_attachments: true
+
+  # Technical Documentation - Mixed Spaces and External Links
+  tech-docs-comprehensive:
+    enabled: true
+    name: "tech-docs-comprehensive" 
+    version: "1.0"
+    vector_store_name: "tech-docs-comprehensive-v1-0"
+    source: URL
+    config:
+      urls:
+        # Confluence spaces
+        - "https://company.atlassian.net/wiki/spaces/API/overview"
+        - "https://company.atlassian.net/wiki/spaces/ARCH/overview"
+        # External documentation
+        - "https://docs.company.com/developer-guide/"
+        # Individual important pages
+        - "https://company.atlassian.net/wiki/spaces/API/pages/123456/Authentication+Guide"
+      
+      crawl:
+        enabled: true
+        max_depth: 4
+        same_domain_only: false  # Allow external docs + Confluence
+        max_pages: 300
+        delay: 1.0
+        
+        confluence:
+          base_url: "https://company.atlassian.net"
+          username: "${CONFLUENCE_USERNAME}"
+          api_token: "${CONFLUENCE_API_TOKEN}"
+          include_attachments: true
+          
+  # Public Confluence Testing (Apache Kafka)
+  apache-kafka-space:
+    enabled: true  # Safe to enable - public access
+    name: "apache-kafka-space"
+    version: "1.0"
+    vector_store_name: "apache-kafka-space-v1-0"
+    source: URL
+    config:
+      urls:
+        # Public Confluence space
+        - "https://cwiki.apache.org/confluence/display/KAFKA/Home"
+      
+      crawl:
+        enabled: true
+        max_depth: 3
+        same_domain_only: true
+        max_pages: 100
+        delay: 3.0  # Be extra respectful to public servers
+        
+        confluence:
+          base_url: "https://cwiki.apache.org/confluence"
+          # No authentication for public Confluence
+          include_attachments: true
+          
+  # Large Enterprise Space (Limited Discovery)
+  sales-playbook-space:
+    enabled: false  # Enable after testing smaller spaces
+    name: "sales-playbook-space"
+    version: "1.0"
+    vector_store_name: "sales-playbook-space-v1-0"
+    source: URL
+    config:
+      urls:
+        - "https://company.atlassian.net/wiki/spaces/SALES/overview"
+      
+      crawl:
+        enabled: true
+        max_depth: 2        # Limit depth for large spaces
+        same_domain_only: true
+        max_pages: 1000     # Higher limit for comprehensive spaces
+        delay: 2.0
+        
+        confluence:
+          base_url: "https://company.atlassian.net"
+          username: "${CONFLUENCE_USERNAME}"
+          api_token: "${CONFLUENCE_API_TOKEN}"
+          include_attachments: true
+
+# What gets discovered and processed:
+# 
+# 🏢 Confluence Spaces:
+#   - All pages in the space (including child pages)
+#   - All blog posts in the space
+#   - All attachments (PDF, DOCX, PPTX, XLSX, etc.)
+#   - Page hierarchies (parent-child relationships)
+#   - Related content and cross-references
+#
+# 📄 Document Types Processed by Docling:
+#   - Confluence pages (converted from storage format)
+#   - PDF attachments
+#   - Microsoft Office documents (DOCX, PPTX, XLSX)
+#   - HTML pages and attachments
+#   - Plain text documents
+#
+# 🔍 Discovery Process:
+#   1. Start with space overview URL
+#   2. Extract space key from URL
+#   3. Use Confluence API to discover all content
+#   4. Recursively find child pages and attachments
+#   5. Download and process all documents with Docling
+#   6. Create vector embeddings for all content
+
+# Environment Variables Required:
+# export CONFLUENCE_USERNAME="your-email@company.com"
+# export CONFLUENCE_API_TOKEN="your-api-token-from-atlassian"
+
+# Usage Instructions:
+# 1. Start with a small space (like apache-kafka-space) for testing
+# 2. Configure your company credentials 
+# 3. Enable one pipeline at a time
+# 4. Monitor logs for discovery progress
+# 5. Check vector database for ingested content
+
+# Performance Notes:
+# - Large spaces (>500 pages) may take significant time
+# - Adjust max_pages and max_depth based on your needs
+# - Use appropriate delays to avoid overwhelming Confluence servers
+# - Consider running during off-peak hours for large ingestions
