@@ -156,41 +156,152 @@ class ConfluenceClient:
             logger.error(f"Error fetching Confluence page '{title}' in space '{space_key}': {e}")
             return None
     
-    def get_space_pages(self, space_key: str, limit: int = 25) -> List[Dict[str, Any]]:
-        """Get all pages in a Confluence space."""
+    def get_space_pages(self, space_key: str, limit: int = 100, include_attachments: bool = True) -> List[Dict[str, Any]]:
+        """Get all pages and documents in a Confluence space with comprehensive discovery."""
         try:
-            pages = []
+            all_content = []
             start = 0
             
-            while len(pages) < limit:
-                url = f"{self.api_base}/content"
-                params = {
-                    'type': 'page',
-                    'spaceKey': space_key,
-                    'expand': 'body.storage,space,version',
-                    'limit': min(50, limit - len(pages)),
-                    'start': start
-                }
+            logger.info(f"Discovering all content in Confluence space: {space_key}")
+            
+            while len(all_content) < limit:
+                # Get both pages and blog posts
+                for content_type in ['page', 'blogpost']:
+                    url = f"{self.api_base}/content"
+                    params = {
+                        'type': content_type,
+                        'spaceKey': space_key,
+                        'expand': 'body.storage,space,version,ancestors,children.page.body.storage,metadata.labels',
+                        'limit': min(50, limit - len(all_content)),
+                        'start': start,
+                        'status': 'current'  # Only get current versions
+                    }
+                    
+                    response = self.session.get(url, params=params, timeout=30)
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    if data['results']:
+                        for item in data['results']:
+                            # Add content type for processing
+                            item['content_type'] = content_type
+                            all_content.append(item)
+                            
+                            # Get child pages recursively
+                            if content_type == 'page':
+                                child_pages = self._get_child_pages(item['id'], depth=0, max_depth=3)
+                                all_content.extend(child_pages)
+                            
+                            # Get attachments if requested
+                            if include_attachments:
+                                attachments = self._get_page_attachments(item['id'])
+                                all_content.extend(attachments)
                 
-                response = self.session.get(url, params=params, timeout=30)
-                response.raise_for_status()
-                data = response.json()
+                start += 50
                 
-                if not data['results']:
+                # Break if we didn't get any new results
+                if not data.get('results'):
                     break
                     
-                pages.extend(data['results'])
-                start += len(data['results'])
-                
-                # Check if we've reached the end
-                if len(data['results']) < params['limit']:
-                    break
-            
-            return pages[:limit]
+            logger.info(f"Discovered {len(all_content)} items in space {space_key}")
+            return all_content[:limit]
             
         except Exception as e:
-            logger.error(f"Error fetching pages from Confluence space '{space_key}': {e}")
+            logger.error(f"Error fetching content from space '{space_key}': {e}")
             return []
+    
+    def _get_child_pages(self, parent_page_id: str, depth: int = 0, max_depth: int = 3) -> List[Dict[str, Any]]:
+        """Recursively get child pages of a parent page."""
+        if depth >= max_depth:
+            return []
+            
+        try:
+            child_pages = []
+            url = f"{self.api_base}/content/{parent_page_id}/child/page"
+            params = {
+                'expand': 'body.storage,space,version,ancestors',
+                'limit': 50
+            }
+            
+            response = self.session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            for child in data.get('results', []):
+                child['content_type'] = 'page'
+                child['parent_id'] = parent_page_id
+                child['depth'] = depth + 1
+                child_pages.append(child)
+                
+                # Get grandchildren recursively
+                grandchildren = self._get_child_pages(child['id'], depth + 1, max_depth)
+                child_pages.extend(grandchildren)
+            
+            return child_pages
+            
+        except Exception as e:
+            logger.error(f"Error fetching child pages for {parent_page_id}: {e}")
+            return []
+    
+    def _get_page_attachments(self, page_id: str) -> List[Dict[str, Any]]:
+        """Get all attachments for a specific page."""
+        try:
+            attachments = []
+            url = f"{self.api_base}/content/{page_id}/child/attachment"
+            params = {
+                'expand': 'version,container,metadata.mediaType',
+                'limit': 50
+            }
+            
+            response = self.session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            for attachment in data.get('results', []):
+                # Only include document attachments that can be processed
+                media_type = attachment.get('metadata', {}).get('mediaType', '')
+                if self._is_processable_attachment(media_type):
+                    attachment['content_type'] = 'attachment'
+                    attachment['parent_page_id'] = page_id
+                    attachments.append(attachment)
+                    
+            logger.debug(f"Found {len(attachments)} processable attachments for page {page_id}")
+            return attachments
+            
+        except Exception as e:
+            logger.error(f"Error fetching attachments for page {page_id}: {e}")
+            return []
+    
+    def _is_processable_attachment(self, media_type: str) -> bool:
+        """Check if attachment can be processed by docling."""
+        processable_types = [
+            'application/pdf',
+            'text/html',
+            'text/plain',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # DOCX
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',  # PPTX
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',  # XLSX
+            'application/msword',  # DOC
+            'application/vnd.ms-powerpoint',  # PPT
+            'application/vnd.ms-excel',  # XLS
+        ]
+        return any(ptype in media_type.lower() for ptype in processable_types)
+    
+    def get_space_info(self, space_key: str) -> Optional[Dict[str, Any]]:
+        """Get information about a Confluence space."""
+        try:
+            url = f"{self.api_base}/space/{space_key}"
+            params = {
+                'expand': 'description.plain,homepage'
+            }
+            
+            response = self.session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            return response.json()
+            
+        except Exception as e:
+            logger.error(f"Error fetching space info for '{space_key}': {e}")
+            return None
     
     def extract_page_id_from_url(self, url: str) -> Optional[str]:
         """Extract page ID from various Confluence URL formats with enhanced support."""
@@ -274,6 +385,105 @@ class ConfluenceClient:
             
         except Exception:
             return False
+    
+    def extract_space_key_from_url(self, url: str) -> Optional[str]:
+        """Extract Confluence space key from various URL formats."""
+        try:
+            parsed = urlparse(url)
+            path = parsed.path
+            
+            logger.debug(f"Extracting space key from URL: {url}")
+            
+            # Pattern 1: /wiki/spaces/SPACE/...
+            if '/spaces/' in path:
+                parts = path.split('/spaces/')
+                if len(parts) > 1:
+                    space_part = parts[1].split('/')[0]
+                    logger.debug(f"Extracted space key from /spaces/ path: {space_part}")
+                    return space_part
+            
+            # Pattern 2: /wiki/display/SPACE/...
+            # Pattern 3: /display/SPACE/...
+            if '/display/' in path:
+                parts = path.split('/display/')
+                if len(parts) > 1:
+                    space_part = parts[1].split('/')[0]
+                    logger.debug(f"Extracted space key from /display/ path: {space_part}")
+                    return space_part
+            
+            # Pattern 4: Query parameters
+            query_params = parse_qs(parsed.query)
+            if 'spaceKey' in query_params:
+                space_key = query_params['spaceKey'][0]
+                logger.debug(f"Extracted space key from query parameter: {space_key}")
+                return space_key
+                
+            # Pattern 5: Check if URL contains 'overview' (space homepage)
+            if 'overview' in path:
+                # Try to extract from parent path
+                path_parts = path.strip('/').split('/')
+                for i, part in enumerate(path_parts):
+                    if part in ['spaces', 'display'] and i + 1 < len(path_parts):
+                        space_key = path_parts[i + 1]
+                        logger.debug(f"Extracted space key from overview URL: {space_key}")
+                        return space_key
+            
+            logger.warning(f"Could not extract space key from URL: {url}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error extracting space key from URL {url}: {e}")
+            return None
+    
+    def is_space_url(self, url: str) -> bool:
+        """Check if URL points to a Confluence space (not a specific page)."""
+        try:
+            parsed = urlparse(url)
+            path = parsed.path.lower()
+            
+            # Space indicators
+            space_indicators = [
+                '/spaces/', 
+                'overview',
+                '/space/',
+                'pages/viewspace.action'
+            ]
+            
+            return any(indicator in path for indicator in space_indicators)
+            
+        except Exception:
+            return False
+    
+    def download_attachment(self, attachment_data: Dict[str, Any]) -> Optional[str]:
+        """Download Confluence attachment to temporary file."""
+        try:
+            download_url = attachment_data.get('_links', {}).get('download')
+            if not download_url:
+                logger.error(f"No download URL for attachment: {attachment_data.get('title', 'Unknown')}")
+                return None
+            
+            # Make download URL absolute
+            if download_url.startswith('/'):
+                download_url = self.base_url + download_url
+            
+            response = self.session.get(download_url, timeout=60)
+            response.raise_for_status()
+            
+            # Create temporary file
+            import tempfile
+            import os
+            
+            file_extension = os.path.splitext(attachment_data.get('title', ''))[-1]
+            with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
+                temp_file.write(response.content)
+                temp_path = temp_file.name
+            
+            logger.debug(f"Downloaded attachment to: {temp_path}")
+            return temp_path
+            
+        except Exception as e:
+            logger.error(f"Error downloading attachment {attachment_data.get('title', 'Unknown')}: {e}")
+            return None
     
     def convert_storage_to_text(self, storage_content: str) -> str:
         """Convert Confluence storage format to well-structured plain text."""
@@ -575,27 +785,81 @@ class WebCrawler:
             try:
                 # Check if this is a Confluence URL and handle specially
                 if self.confluence_client and self.confluence_client.is_confluence_url(current_url):
-                    logger.info(f"Processing Confluence page: {current_url}")
+                    logger.info(f"Processing Confluence URL: {current_url}")
                     
-                    # For Confluence pages, we don't need to fetch HTML - use API instead
-                    confluence_content = self.fetch_confluence_content(current_url)
-                    if confluence_content:
-                        # For Confluence pages, we might want to extract linked pages
-                        if depth < self.max_depth:
-                            # Try to get related pages or space pages
-                            page_id = self.confluence_client.extract_page_id_from_url(current_url)
-                            if page_id:
-                                page_data = self.confluence_client.get_page_content(page_id)
-                                if page_data and 'space' in page_data:
-                                    space_key = page_data['space']['key']
-                                    # Get other pages in the same space (limited)
-                                    space_pages = self.confluence_client.get_space_pages(space_key, limit=10)
-                                    for page in space_pages:
-                                        page_url = f"{self.confluence_client.base_url}/spaces/{space_key}/pages/{page['id']}"
-                                        if page_url not in self.visited_urls and page_url not in self.discovered_urls:
-                                            to_crawl.append((page_url, depth + 1))
-                                            self.discovered_urls.append(page_url)
-                                            logger.debug(f"  Found Confluence page: {page_url}")
+                    # Check if this is a space URL (overview/folder)
+                    if self.confluence_client.is_space_url(current_url):
+                        logger.info(f"Discovered Confluence space URL: {current_url}")
+                        
+                        # Extract space key and get ALL documents in the space
+                        space_key = self.confluence_client.extract_space_key_from_url(current_url)
+                        if space_key:
+                            logger.info(f"Fetching all documents from Confluence space: {space_key}")
+                            
+                            # Get comprehensive space content (pages, blog posts, attachments)
+                            space_content = self.confluence_client.get_space_pages(
+                                space_key, 
+                                limit=min(self.max_pages, 200),  # Reasonable limit for space discovery
+                                include_attachments=True
+                            )
+                            
+                            logger.info(f"Found {len(space_content)} items in space {space_key}")
+                            
+                            # Add all discovered content to crawl queue
+                            for content_item in space_content:
+                                content_type = content_item.get('content_type', 'page')
+                                content_id = content_item.get('id')
+                                content_title = content_item.get('title', 'Unknown')
+                                
+                                if content_type == 'attachment':
+                                    # For attachments, we'll handle them differently during processing
+                                    attachment_url = f"{current_url}/attachment/{content_id}"
+                                    if attachment_url not in self.visited_urls and attachment_url not in self.discovered_urls:
+                                        self.discovered_urls.append(attachment_url)
+                                        logger.debug(f"  Found attachment: {content_title}")
+                                else:
+                                    # For pages and blog posts, create proper URLs
+                                    if content_type == 'blogpost':
+                                        page_url = f"{self.confluence_client.base_url}/wiki/spaces/{space_key}/blog/{content_id}"
+                                    else:
+                                        page_url = f"{self.confluence_client.base_url}/wiki/spaces/{space_key}/pages/{content_id}"
+                                    
+                                    if page_url not in self.visited_urls and page_url not in self.discovered_urls:
+                                        to_crawl.append((page_url, depth + 1))
+                                        self.discovered_urls.append(page_url)
+                                        content_depth = content_item.get('depth', 0)
+                                        logger.debug(f"  Found {content_type}: {content_title} (depth: {content_depth})")
+                        else:
+                            logger.warning(f"Could not extract space key from: {current_url}")
+                    
+                    else:
+                        # Individual Confluence page/blog post
+                        confluence_content = self.fetch_confluence_content(current_url)
+                        if confluence_content:
+                            # For individual pages, still discover related pages if within depth limits
+                            if depth < self.max_depth:
+                                page_id = self.confluence_client.extract_page_id_from_url(current_url)
+                                if page_id:
+                                    page_data = self.confluence_client.get_page_content(page_id)
+                                    if page_data and 'space' in page_data:
+                                        space_key = page_data['space']['key']
+                                        
+                                        # Get child pages of this page
+                                        child_pages = self.confluence_client._get_child_pages(page_id, depth=0, max_depth=2)
+                                        for child_page in child_pages:
+                                            child_url = f"{self.confluence_client.base_url}/wiki/spaces/{space_key}/pages/{child_page['id']}"
+                                            if child_url not in self.visited_urls and child_url not in self.discovered_urls:
+                                                to_crawl.append((child_url, depth + 1))
+                                                self.discovered_urls.append(child_url)
+                                                logger.debug(f"  Found child page: {child_page.get('title', 'Unknown')}")
+                                        
+                                        # Get attachments for this page
+                                        attachments = self.confluence_client._get_page_attachments(page_id)
+                                        for attachment in attachments:
+                                            attachment_url = f"{current_url}/attachment/{attachment['id']}"
+                                            if attachment_url not in self.visited_urls and attachment_url not in self.discovered_urls:
+                                                self.discovered_urls.append(attachment_url)
+                                                logger.debug(f"  Found attachment: {attachment.get('title', 'Unknown')}")
                     
                     self.visited_urls.add(current_url)
                     
@@ -898,38 +1162,99 @@ class IngestionService:
                    self.crawler.confluence_client and \
                    self.crawler.confluence_client.is_confluence_url(source):
                     
-                    # Fetch Confluence content directly
-                    logger.info(f"Processing Confluence page: {source}")
-                    confluence_content = self.crawler.fetch_confluence_content(source)
-                    
-                    if confluence_content:
-                        # Manual chunking for Confluence content
-                        chunk_size = 512  # tokens, approximate by words
-                        words = confluence_content.split()
+                    # Check if this is a Confluence attachment URL
+                    if '/attachment/' in source:
+                        logger.info(f"Processing Confluence attachment: {source}")
                         
-                        # Simple chunking by word count (approximate token count)
-                        for i in range(0, len(words), chunk_size):
-                            chunk_words = words[i:i + chunk_size]
-                            if len(chunk_words) > 10:  # Only meaningful chunks
-                                doc_id += 1
-                                chunk_text = ' '.join(chunk_words)
+                        # Extract attachment ID and page info from URL
+                        attachment_id = source.split('/attachment/')[-1]
+                        
+                        # Get attachment metadata from Confluence API
+                        try:
+                            attachment_url = f"{self.crawler.confluence_client.api_base}/content/{attachment_id}"
+                            response = self.crawler.confluence_client.session.get(attachment_url, timeout=30)
+                            response.raise_for_status()
+                            attachment_data = response.json()
+                            
+                            # Download the attachment to a temporary file
+                            temp_file_path = self.crawler.confluence_client.download_attachment(attachment_data)
+                            if temp_file_path:
+                                try:
+                                    # Process with Docling
+                                    logger.info(f"Processing attachment with Docling: {attachment_data.get('title', 'Unknown')}")
+                                    docling_doc = self.converter.convert(source=temp_file_path).document
+                                    chunks = self.chunker.chunk(docling_doc)
+                                    chunk_count = 0
+                                    
+                                    for chunk in chunks:
+                                        if any(
+                                            c.label in [DocItemLabel.TEXT, DocItemLabel.PARAGRAPH]
+                                            for c in chunk.meta.doc_items
+                                        ):
+                                            doc_id += 1
+                                            chunk_count += 1
+                                            llama_documents.append(
+                                                LlamaStackDocument(
+                                                    document_id=f"confluence-attachment-{doc_id}",
+                                                    content=chunk.text,
+                                                    mime_type="text/plain",
+                                                    metadata={
+                                                        "source": source,
+                                                        "type": "confluence-attachment",
+                                                        "source_name": attachment_data.get('title', source_name),
+                                                        "attachment_id": attachment_id,
+                                                        "media_type": attachment_data.get('metadata', {}).get('mediaType', 'unknown')
+                                                    },
+                                                )
+                                            )
+                                    
+                                    logger.info(f"  → Created {chunk_count} chunks from attachment: {attachment_data.get('title', 'Unknown')}")
+                                    
+                                finally:
+                                    # Clean up temporary file
+                                    try:
+                                        os.unlink(temp_file_path)
+                                    except Exception:
+                                        pass
+                            else:
+                                logger.error(f"Failed to download Confluence attachment: {source}")
                                 
-                                llama_documents.append(
-                                    LlamaStackDocument(
-                                        document_id=f"confluence-{doc_id}",
-                                        content=chunk_text,
-                                        mime_type="text/plain",
-                                        metadata={
-                                            "source": source,
-                                            "type": "confluence",
-                                            "source_name": source_name
-                                        },
-                                    )
-                                )
-                        
-                        logger.info(f"  → Created {len([d for d in llama_documents if d.metadata.get('source') == source])} Confluence chunks")
+                        except Exception as e:
+                            logger.error(f"Error processing Confluence attachment {source}: {e}")
+                    
                     else:
-                        logger.warning(f"Could not fetch Confluence content from: {source}")
+                        # Regular Confluence page/blog post
+                        logger.info(f"Processing Confluence page: {source}")
+                        confluence_content = self.crawler.fetch_confluence_content(source)
+                        
+                        if confluence_content:
+                            # Manual chunking for Confluence content
+                            chunk_size = 512  # tokens, approximate by words
+                            words = confluence_content.split()
+                            
+                            # Simple chunking by word count (approximate token count)
+                            for i in range(0, len(words), chunk_size):
+                                chunk_words = words[i:i + chunk_size]
+                                if len(chunk_words) > 10:  # Only meaningful chunks
+                                    doc_id += 1
+                                    chunk_text = ' '.join(chunk_words)
+                                    
+                                    llama_documents.append(
+                                        LlamaStackDocument(
+                                            document_id=f"confluence-{doc_id}",
+                                            content=chunk_text,
+                                            mime_type="text/plain",
+                                            metadata={
+                                                "source": source,
+                                                "type": "confluence",
+                                                "source_name": source_name
+                                            },
+                                        )
+                                    )
+                            
+                            logger.info(f"  → Created {len([d for d in llama_documents if d.metadata.get('source') == source])} Confluence chunks")
+                        else:
+                            logger.warning(f"Could not fetch Confluence content from: {source}")
                 
                 else:
                     # Use Docling for regular documents (PDF, HTML, DOCX, PPTX, etc.)
