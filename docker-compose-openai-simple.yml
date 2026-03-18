@@ -1,0 +1,134 @@
+# Simplified Docker Compose for RAG with OpenAI (PC-Friendly Setup)
+# Uses the proven working Ollama distribution but configured for OpenAI
+version: '3.8'
+
+services:
+  # PostgreSQL with PGVector for embeddings storage
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: rag-pgvector-openai
+    environment:
+      POSTGRES_DB: ragdb
+      POSTGRES_USER: raguser
+      POSTGRES_PASSWORD: ragpassword
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # LlamaStack using the working Ollama distribution but configured for OpenAI
+  llamastack:
+    image: llamastack/distribution-ollama:0.2.9
+    container_name: rag-llamastack-openai
+    ports:
+      - "8321:8321"
+    environment:
+      # OpenAI Configuration
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      INFERENCE_MODEL: "${INFERENCE_MODEL:-gpt-4o-mini}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-text-embedding-3-small}"
+      
+      # Database connection
+      PGVECTOR_HOST: pgvector
+      PGVECTOR_PORT: 5432
+      PGVECTOR_DB: ragdb
+      PGVECTOR_USER: raguser
+      PGVECTOR_PASSWORD: ragpassword
+      
+      # Optional: Web search
+      TAVILY_SEARCH_API_KEY: "${TAVILY_SEARCH_API_KEY:-}"
+      
+      # Force OpenAI provider instead of Ollama
+      INFERENCE_PROVIDER: openai
+      EMBEDDING_PROVIDER: openai
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # Enhanced ingestion service with Confluence support
+  rag-ingestion:
+    build:
+      context: .
+      dockerfile: ingestion-service/Containerfile.enhanced
+    container_name: rag-ingestion-openai
+    environment:
+      # OpenAI Configuration for embeddings
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-text-embedding-3-small}"
+      
+      # Confluence Integration
+      CONFLUENCE_BASE_URL: "${CONFLUENCE_BASE_URL:-}"
+      CONFLUENCE_USERNAME: "${CONFLUENCE_USERNAME:-}"
+      CONFLUENCE_API_TOKEN: "${CONFLUENCE_API_TOKEN:-}"
+      
+      # Database connection
+      PGVECTOR_HOST: pgvector
+      PGVECTOR_PORT: 5432
+      PGVECTOR_DB: ragdb
+      PGVECTOR_USER: raguser
+      PGVECTOR_PASSWORD: ragpassword
+      
+      # LlamaStack endpoint
+      LLAMA_STACK_ENDPOINT: http://llamastack:8321
+    depends_on:
+      - pgvector
+      - llamastack
+    networks:
+      - rag-network
+    restart: "no"  # Run once for ingestion
+
+  # RAG UI (Streamlit frontend)
+  rag-ui:
+    build:
+      context: .
+      dockerfile: frontend/Containerfile
+    container_name: rag-ui-openai
+    ports:
+      - "8501:8501"
+    environment:
+      # LlamaStack connection
+      LLAMA_STACK_ENDPOINT: http://llamastack:8321
+      
+      # OpenAI configuration
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      
+      # UI configuration for your MFS space
+      RAG_QUESTION_SUGGESTIONS: |
+        {
+          "mfs-docs-v1-0": [
+            "What is documented in the MFS space?",
+            "How do I access MFS resources?",
+            "What are the MFS guidelines?",
+            "Where can I find MFS procedures?"
+          ],
+          "confluence-docs-v1-0": [
+            "What Confluence pages are available?",
+            "How do I navigate the documentation?",
+            "What are the key processes documented?",
+            "Where can I find team information?"
+          ]
+        }
+    depends_on:
+      - llamastack
+      - pgvector
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+networks:
+  rag-network:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
