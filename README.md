@@ -6,6 +6,38 @@
 
 Use retrieval-augmented generation (RAG) to enhance large language models with specialized data sources for more accurate and context-aware responses.
 
+## 🚀 Quick Start - Multiple Deployment Options
+
+This RAG system supports both **personal development** and **enterprise production** deployment with multiple LLM provider options:
+
+### **💻 Personal/Development Setup (2 Minutes)**
+Perfect for development, learning, or personal knowledge management:
+```bash
+# Quick PC setup with OpenAI (no GPU required)
+./start-rag-openai.sh
+```
+
+### **🏢 Enterprise Production Deployment**  
+Scalable deployment for OpenShift/Kubernetes with multiple LLM provider options:
+```bash
+# Interactive deployment script with 6 provider options
+./deploy-rag.sh
+```
+
+### **📋 Deployment Comparison**
+
+| Option | Use Case | Setup Time | Hardware | Monthly Cost |
+|--------|----------|------------|----------|--------------|
+| **PC + OpenAI** | Development, Personal | 2 min | Any PC | $1-5 |
+| **PC + Ollama** | Privacy, Learning | 15 min | GPU recommended | Free |
+| **OpenShift + OpenAI** | Enterprise Production | 30 min | Any nodes | $50-500 |
+| **OpenShift + Azure OpenAI** | Compliance, Azure | 45 min | Any nodes | $100-1000 |
+| **OpenShift AI (RHOAI)** | ML Platform Integration | 45 min | GPU nodes | Hardware + license |
+| **OpenShift + vLLM** | High Performance | 60 min | GPU cluster | Hardware cost |
+| **OpenShift + Ollama** | Self-hosted Enterprise | 45 min | GPU nodes | Hardware cost |
+
+**📖 [Complete Deployment Guide →](DEPLOYMENT-OPTIONS.md)** | **💻 [PC Setup Guide →](README-OPENAI.md)** | **🤖 [OpenShift AI Guide →](OPENSHIFT-AI-GUIDE.md)** | **🏢 [Confluence Integration →](CONFLUENCE-SPACE-DISCOVERY.md)**
+
 <!-- omit from toc -->
 ## Table of Contents
 - [Detailed description](#detailed-description)

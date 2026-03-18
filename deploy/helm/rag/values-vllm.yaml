@@ -1,0 +1,256 @@
+# vLLM Provider Configuration for OpenShift/Kubernetes Deployment  
+# Use this for high-performance deployment with vLLM backend
+
+replicaCount: 1
+
+image:
+  repository: quay.io/rh-ai-quickstart/llamastack-dist-ui
+  pullPolicy: Always
+  tag: 0.2.33
+
+service:
+  type: ClusterIP
+  port: 8501
+
+serviceAccount:
+  create: false
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+env:
+  - name: LLAMA_STACK_ENDPOINT
+    value: 'http://llamastack:8321'
+
+volumes:
+  - emptyDir: {}
+    name: dot-streamlit
+
+volumeMounts:
+  - mountPath: /.streamlit
+    name: dot-streamlit
+
+# vLLM High-Performance Model Configuration
+global:
+  models:
+    # High-performance Llama models with vLLM
+    llama-3-2-3b-instruct:
+      id: meta-llama/Llama-3.2-3B-Instruct
+      enabled: true
+      provider: "vllm"
+      device: "gpu"
+      accelerators: "1"
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+          memory: "12Gi"
+        requests:
+          memory: "8Gi"
+          cpu: "4"
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: Exists
+          effect: NoSchedule
+      args:
+        - --tensor-parallel-size=1
+        - --max-model-len=8192
+        - --enable-auto-tool-choice
+        - --chat-template
+        - /vllm-workspace/examples/tool_chat_template_llama3.2_json.jinja
+        - --tool-call-parser
+        - llama3_json
+        - --gpu-memory-utilization=0.85
+        
+    llama-3-1-8b-instruct:
+      id: meta-llama/Llama-3.1-8B-Instruct
+      enabled: false  # Enable for better quality
+      provider: "vllm"
+      device: "gpu"
+      accelerators: "2"  # Multi-GPU setup
+      resources:
+        limits:
+          nvidia.com/gpu: "2"
+          memory: "24Gi"
+        requests:
+          memory: "16Gi"
+          cpu: "8"
+      args:
+        - --tensor-parallel-size=2
+        - --max-model-len=14336
+        - --max-num-seqs=64
+        - --enable-auto-tool-choice
+        - --gpu-memory-utilization=0.90
+        
+    # Code generation model
+    codellama-13b-instruct:
+      id: codellama/CodeLlama-13b-Instruct-hf
+      enabled: false
+      provider: "vllm"
+      device: "gpu"
+      accelerators: "2"
+      resources:
+        limits:
+          nvidia.com/gpu: "2"
+          memory: "32Gi"
+        requests:
+          memory: "24Gi"
+          cpu: "8"
+      args:
+        - --tensor-parallel-size=2
+        - --max-model-len=16384
+        - --enable-auto-tool-choice
+        
+    # Embedding model (separate deployment)
+    embedding-model:
+      id: sentence-transformers/all-MiniLM-L6-v2
+      enabled: true
+      provider: "embedding-service"
+      device: "cpu"
+      resources:
+        limits:
+          memory: "4Gi"
+        requests:
+          memory: "2Gi"
+          cpu: "2"
+          
+  mcp-servers: {}
+
+# LLM Service Configuration (enabled for vLLM)
+llm-service:
+  enabled: true
+  secret:
+    hf_token: ""  # Hugging Face token for model downloads
+    enabled: true
+    
+# Vector Database Configuration  
+pgvector:
+  enabled: true
+  secret:
+    user: postgres
+    password: rag_password
+    dbname: rag_blueprint
+    host: pgvector
+    port: "5432"
+    
+  sampleFileUpload:
+    enabled: true
+    bucket: documents
+    urls: 
+    - https://raw.githubusercontent.com/rh-ai-quickstart/RAG/refs/heads/main/notebooks/Zippity_Zoo_Grand_Invention.pdf
+
+# LlamaStack Configuration for vLLM
+llama-stack:
+  enabled: true
+  provider: "vllm"
+  secrets:
+    TAVILY_SEARCH_API_KEY: "your-tavily-key-here"
+  environment:
+    - name: INFERENCE_MODEL
+      value: "meta-llama/Llama-3.2-3B-Instruct"
+    - name: EMBEDDING_MODEL
+      value: "all-MiniLM-L6-v2"
+    - name: VLLM_URL
+      value: "http://vllm-service:8000"
+    - name: TENSOR_PARALLEL_SIZE
+      value: "1"
+      
+# Ingestion Pipeline Configuration
+configure-pipeline:
+  enabled: true
+  provider: "vllm"
+  minio:
+    secret:
+      user: minio_rag_user
+      password: minio_rag_password
+      host: minio
+      port: "9000"
+
+# MCP Servers
+mcp-servers:
+  enabled: true
+
+# Performance-optimized Questions
+suggestedQuestions:
+  performance-docs-v1-0:
+    - "How do I optimize model performance?"
+    - "What are the GPU memory requirements?"
+    - "How do I configure tensor parallelism?"
+    - "What batch sizes work best?"
+    
+  enterprise-v1-0:
+    - "What are our enterprise AI policies?"
+    - "How do we handle model governance?"
+    - "What are the security requirements?"
+    - "How do we monitor model usage?"
+
+# Enhanced Ingestion Pipeline
+ingestion-pipeline:
+  enabled: true
+  provider: "vllm"
+  serviceAccount:
+    create: true
+    name: rag-pipeline-vllm
+    
+  pipelines:
+    # Large-scale document processing
+    enterprise-knowledge:
+      enabled: true
+      source: URL
+      embedding_model: "all-MiniLM-L6-v2"
+      name: "enterprise-knowledge"
+      version: "1.0"
+      vector_store_name: "enterprise-knowledge-v1-0"
+      url_config:
+        urls:
+          - "https://enterprise-docs.company.com"
+          - "https://confluence.company.com/spaces/ALL/overview"
+        crawling:
+          enabled: true
+          max_depth: 4
+          max_pages: 5000  # Large scale processing
+          delay: 0.5  # Faster crawling for internal systems
+          
+# Resource Configuration for High-Performance
+resources:
+  limits:
+    nvidia.com/gpu: "4"  # Multi-GPU setup
+    memory: "64Gi"
+    cpu: "16"
+  requests:
+    nvidia.com/gpu: "2"
+    memory: "32Gi"
+    cpu: "8"
+
+# Node Selection for High-Performance GPU nodes
+nodeSelector:
+  node-type: gpu-high-memory
+  gpu-generation: "v100,a100,h100"
+
+# Tolerations for GPU nodes
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+  - key: high-performance
+    operator: Exists
+    effect: NoSchedule
+
+# Horizontal Pod Autoscaler for scaling
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

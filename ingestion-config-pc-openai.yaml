@@ -1,0 +1,98 @@
+# PC-Friendly RAG Ingestion Configuration with OpenAI
+# Optimized for personal use with small to medium document sets
+
+llamastack:
+  base_url: "http://llamastack:8321"
+  
+vector_db:
+  embedding_model: "text-embedding-3-small"  # OpenAI embedding model
+  embedding_dimension: 1536                   # OpenAI embedding size
+  chunk_size_in_tokens: 512
+
+pipelines:
+  # Web Documentation Ingestion (no auth required)
+  web-docs:
+    enabled: true
+    name: "web-docs"
+    version: "1.0"
+    vector_store_name: "web-docs-v1-0"
+    source: URL
+    config:
+      urls:
+        # Example documentation sites - replace with your URLs
+        - "https://docs.python.org/3/tutorial/"
+        - "https://fastapi.tiangolo.com/"
+        - "https://docs.docker.com/get-started/"
+      
+      crawl:
+        enabled: true
+        max_depth: 2        # Moderate crawling for personal use
+        same_domain_only: true
+        max_pages: 50       # Reasonable limit for testing
+        delay: 1.0          # 1 second delay between requests
+
+  # Your Company Confluence (if you have access)
+  company-confluence:
+    enabled: false  # Enable after setting up Confluence credentials
+    name: "company-confluence"
+    version: "1.0"
+    vector_store_name: "company-confluence-v1-0"
+    source: URL
+    config:
+      urls:
+        # Replace with your actual Confluence space URLs
+        - "https://your-company.atlassian.net/wiki/spaces/ENG/overview"
+        - "https://your-company.atlassian.net/wiki/spaces/DOC/overview"
+      
+      crawl:
+        enabled: true
+        max_depth: 3
+        same_domain_only: true
+        max_pages: 100      # Adjust based on space size
+        delay: 2.0          # Be respectful to company servers
+        
+        confluence:
+          base_url: "https://your-company.atlassian.net"
+          username: "${CONFLUENCE_USERNAME}"
+          api_token: "${CONFLUENCE_API_TOKEN}"
+          include_attachments: true
+
+  # GitHub Repository Documentation
+  github-docs:
+    enabled: false  # Enable to test GitHub integration
+    name: "github-docs"
+    version: "1.0"
+    vector_store_name: "github-docs-v1-0"
+    source: GITHUB
+    config:
+      GITHUB:
+        url: "https://github.com/your-username/your-repo.git"
+        path: "docs"        # Only process docs folder
+        branch: "main"
+        # token: "${GITHUB_TOKEN}"  # Optional for private repos
+        
+  # Local Files Upload (via UI)
+  uploaded-docs:
+    enabled: true
+    name: "uploaded-docs"
+    version: "1.0"
+    vector_store_name: "uploaded-docs-v1-0"
+    source: UPLOAD
+    # Files uploaded through the web UI will use this pipeline
+
+# Usage Instructions:
+# 1. Set OPENAI_API_KEY in .env file
+# 2. Enable the pipelines you want to use
+# 3. Replace URLs with your actual documentation
+# 4. Run: docker-compose -f docker-compose-openai.yml up
+
+# Cost Estimates (OpenAI pricing):
+# - Embeddings: ~$0.02 per 1M tokens (~750k words)
+# - Chat (gpt-4o-mini): ~$0.15 per 1M input tokens, ~$0.60 per 1M output tokens
+# - Typical usage: $1-5 per month for personal documentation
+
+# Performance on PC:
+# - No GPU required
+# - ~2GB RAM usage
+# - Fast startup (no model downloads)
+# - Internet connection required

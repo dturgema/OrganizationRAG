@@ -1,0 +1,259 @@
+# Azure OpenAI Provider Configuration for OpenShift/Kubernetes Deployment
+# Use this for enterprise deployment with Azure OpenAI Service
+
+replicaCount: 1
+
+image:
+  repository: quay.io/rh-ai-quickstart/llamastack-dist-ui
+  pullPolicy: Always
+  tag: 0.2.33
+
+service:
+  type: ClusterIP
+  port: 8501
+
+serviceAccount:
+  create: false
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+env:
+  - name: LLAMA_STACK_ENDPOINT
+    value: 'http://llamastack:8321'
+  - name: AZURE_OPENAI_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: azure-openai-credentials
+        key: api-key
+  - name: AZURE_OPENAI_ENDPOINT
+    valueFrom:
+      secretKeyRef:
+        name: azure-openai-credentials
+        key: endpoint
+
+volumes:
+  - emptyDir: {}
+    name: dot-streamlit
+
+volumeMounts:
+  - mountPath: /.streamlit
+    name: dot-streamlit
+
+# Azure OpenAI Model Configuration
+global:
+  models:
+    # Azure OpenAI GPT Models
+    gpt-4o-mini-azure:
+      url: "${AZURE_OPENAI_ENDPOINT}/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-02-01"
+      apiToken: "${AZURE_OPENAI_API_KEY}"
+      id: "gpt-4o-mini"
+      enabled: true
+      provider: "azure-openai"
+      type: "chat"
+      deployment_name: "gpt-4o-mini"
+      
+    gpt-4o-azure:
+      url: "${AZURE_OPENAI_ENDPOINT}/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01"
+      apiToken: "${AZURE_OPENAI_API_KEY}"
+      id: "gpt-4o"
+      enabled: false  # Enable for higher quality
+      provider: "azure-openai"
+      type: "chat"
+      deployment_name: "gpt-4o"
+      
+    gpt-35-turbo-azure:
+      url: "${AZURE_OPENAI_ENDPOINT}/openai/deployments/gpt-35-turbo/chat/completions?api-version=2024-02-01"
+      apiToken: "${AZURE_OPENAI_API_KEY}"
+      id: "gpt-3.5-turbo"
+      enabled: false
+      provider: "azure-openai"
+      type: "chat"
+      deployment_name: "gpt-35-turbo"
+      
+    # Azure OpenAI Embedding Models
+    text-embedding-ada-002-azure:
+      url: "${AZURE_OPENAI_ENDPOINT}/openai/deployments/text-embedding-ada-002/embeddings?api-version=2024-02-01"
+      apiToken: "${AZURE_OPENAI_API_KEY}"
+      id: "text-embedding-ada-002"
+      enabled: true
+      provider: "azure-openai"
+      type: "embedding"
+      deployment_name: "text-embedding-ada-002"
+      
+    text-embedding-3-small-azure:
+      url: "${AZURE_OPENAI_ENDPOINT}/openai/deployments/text-embedding-3-small/embeddings?api-version=2024-02-01"
+      apiToken: "${AZURE_OPENAI_API_KEY}"
+      id: "text-embedding-3-small"
+      enabled: false  # Enable if available in your Azure region
+      provider: "azure-openai"
+      type: "embedding"
+      deployment_name: "text-embedding-3-small"
+      
+  mcp-servers: {}
+
+# LLM Service Configuration (disabled for Azure OpenAI)
+llm-service:
+  enabled: false
+  
+# Vector Database Configuration
+pgvector:
+  enabled: true
+  secret:
+    user: postgres
+    password: rag_password
+    dbname: rag_blueprint
+    host: pgvector
+    port: "5432"
+    
+  sampleFileUpload:
+    enabled: true
+    bucket: documents
+    urls: 
+    - https://raw.githubusercontent.com/rh-ai-quickstart/RAG/refs/heads/main/notebooks/Zippity_Zoo_Grand_Invention.pdf
+
+# LlamaStack Configuration for Azure OpenAI
+llama-stack:
+  enabled: true
+  provider: "azure-openai"
+  secrets:
+    AZURE_OPENAI_API_KEY: "your-azure-openai-api-key"
+    AZURE_OPENAI_ENDPOINT: "https://your-resource.openai.azure.com"
+    TAVILY_SEARCH_API_KEY: "your-tavily-key-here"
+  environment:
+    - name: INFERENCE_MODEL
+      value: "gpt-4o-mini"
+    - name: EMBEDDING_MODEL
+      value: "text-embedding-ada-002"
+    - name: AZURE_OPENAI_API_VERSION
+      value: "2024-02-01"
+    - name: AZURE_OPENAI_DEPLOYMENT_NAME
+      value: "gpt-4o-mini"
+    - name: AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+      value: "text-embedding-ada-002"
+
+# Ingestion Pipeline Configuration
+configure-pipeline:
+  enabled: true
+  provider: "azure-openai"
+  minio:
+    secret:
+      user: minio_rag_user
+      password: minio_rag_password
+      host: minio
+      port: "9000"
+
+# MCP Servers
+mcp-servers:
+  enabled: true
+
+# Enterprise-focused suggested questions
+suggestedQuestions:
+  azure-enterprise-v1-0:
+    - "What are our Azure OpenAI usage policies?"
+    - "How do we ensure data privacy with Azure OpenAI?"
+    - "What are the compliance requirements?"
+    - "How do we monitor and control costs?"
+    
+  company-policies-v1-0:
+    - "What is our AI governance framework?"
+    - "How do we handle sensitive data in AI systems?"
+    - "What are the approved AI use cases?"
+    - "Who approves AI system deployments?"
+
+# Enhanced Ingestion Pipeline with Enterprise Features
+ingestion-pipeline:
+  enabled: true
+  provider: "azure-openai"
+  serviceAccount:
+    create: true
+    name: rag-pipeline-azure
+    annotations:
+      azure.workload.identity/client-id: "your-azure-client-id"  # For Azure AD integration
+      
+  pipelines:
+    # Enterprise SharePoint/OneDrive Integration
+    sharepoint-docs:
+      enabled: false  # Enable after SharePoint API configuration
+      source: SHAREPOINT
+      embedding_model: "text-embedding-ada-002"
+      name: "sharepoint-docs"
+      version: "1.0"
+      vector_store_name: "sharepoint-docs-v1-0"
+      sharepoint_config:
+        tenant_id: "${AZURE_TENANT_ID}"
+        client_id: "${AZURE_CLIENT_ID}"
+        client_secret: "${AZURE_CLIENT_SECRET}"
+        site_urls:
+          - "https://company.sharepoint.com/sites/engineering"
+          - "https://company.sharepoint.com/sites/documentation"
+          
+    # Azure DevOps Documentation  
+    azure-devops-docs:
+      enabled: false  # Enable after Azure DevOps configuration
+      source: AZURE_DEVOPS
+      embedding_model: "text-embedding-ada-002"
+      name: "azure-devops-docs"
+      version: "1.0"
+      vector_store_name: "azure-devops-docs-v1-0"
+      azure_devops_config:
+        organization: "your-org"
+        project: "documentation"
+        pat_token: "${AZURE_DEVOPS_PAT}"
+        
+    # Company Confluence with Azure integration
+    company-confluence-azure:
+      enabled: false
+      source: URL
+      embedding_model: "text-embedding-ada-002"
+      name: "company-confluence-azure"
+      version: "1.0"
+      vector_store_name: "company-confluence-azure-v1-0"
+      url_config:
+        urls:
+          - "https://company.atlassian.net/wiki/spaces/ENG/overview"
+        crawling:
+          enabled: true
+          max_depth: 3
+          max_pages: 1000
+          confluence:
+            base_url: "https://company.atlassian.net"
+            username: "${CONFLUENCE_USERNAME}"
+            api_token: "${CONFLUENCE_API_TOKEN}"
+            include_attachments: true
+
+# Azure-specific security and compliance
+security:
+  networkPolicies:
+    enabled: true
+  podSecurityStandards:
+    enforced: "restricted"
+  
+# Azure Log Analytics integration
+monitoring:
+  azureLogAnalytics:
+    enabled: true
+    workspaceId: "${AZURE_LOG_ANALYTICS_WORKSPACE_ID}"
+    
+# Private endpoint support for Azure services
+networking:
+  privateEndpoints:
+    enabled: true
+    azureOpenAI: true
+    
+# Azure Key Vault integration for secrets
+keyVault:
+  enabled: true
+  vaultUrl: "https://your-keyvault.vault.azure.net/"
+  secrets:
+    - name: azure-openai-api-key
+      key: azure-openai-api-key
+    - name: azure-openai-endpoint
+      key: azure-openai-endpoint

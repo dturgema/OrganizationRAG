@@ -1,0 +1,345 @@
+# Red Hat OpenShift AI (RHOAI) Provider Configuration
+# Use this for deployment with OpenShift AI model serving and data science platform
+
+replicaCount: 1
+
+image:
+  repository: quay.io/rh-ai-quickstart/llamastack-dist-ui
+  pullPolicy: Always
+  tag: 0.2.33
+
+service:
+  type: ClusterIP
+  port: 8501
+
+serviceAccount:
+  create: true
+  name: rag-rhoai-service-account
+  annotations:
+    # OpenShift AI service account annotations
+    opendatahub.io/managed: "true"
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+env:
+  - name: LLAMA_STACK_ENDPOINT
+    value: 'http://llamastack:8321'
+  - name: RHOAI_MODEL_ENDPOINT
+    valueFrom:
+      configMapKeyRef:
+        name: rhoai-model-config
+        key: model-endpoint
+  - name: RHOAI_AUTH_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: rhoai-model-credentials
+        key: auth-token
+
+volumes:
+  - emptyDir: {}
+    name: dot-streamlit
+
+volumeMounts:
+  - mountPath: /.streamlit
+    name: dot-streamlit
+
+# OpenShift AI Model Serving Configuration
+global:
+  models:
+    # Models served via OpenShift AI Model Serving
+    llama-3-2-3b-rhoai:
+      id: meta-llama/Llama-3.2-3B-Instruct
+      enabled: true
+      provider: "openshift-ai"
+      serving_runtime: "vllm-runtime"
+      endpoint: "http://llama-3-2-3b.llama-stack-rag.svc.cluster.local:8080/v1"
+      type: "chat"
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+          memory: "8Gi"
+        requests:
+          nvidia.com/gpu: "1"
+          memory: "4Gi"
+          cpu: "2"
+      model_config:
+        max_model_len: 8192
+        tensor_parallel_size: 1
+        gpu_memory_utilization: 0.85
+        
+    llama-3-1-8b-rhoai:
+      id: meta-llama/Llama-3.1-8B-Instruct
+      enabled: false  # Enable for better quality
+      provider: "openshift-ai"
+      serving_runtime: "vllm-runtime"
+      endpoint: "http://llama-3-1-8b.llama-stack-rag.svc.cluster.local:8080/v1"
+      type: "chat"
+      resources:
+        limits:
+          nvidia.com/gpu: "2"
+          memory: "16Gi"
+        requests:
+          nvidia.com/gpu: "1"
+          memory: "8Gi"
+          cpu: "4"
+      model_config:
+        max_model_len: 14336
+        tensor_parallel_size: 2
+        
+    # Code generation model
+    codellama-7b-rhoai:
+      id: codellama/CodeLlama-7b-Instruct-hf
+      enabled: false
+      provider: "openshift-ai"
+      serving_runtime: "vllm-runtime"
+      endpoint: "http://codellama-7b.llama-stack-rag.svc.cluster.local:8080/v1"
+      type: "chat"
+      
+    # Embedding model via OpenShift AI
+    embedding-rhoai:
+      id: sentence-transformers/all-MiniLM-L6-v2
+      enabled: true
+      provider: "openshift-ai"
+      serving_runtime: "ovms-runtime"
+      endpoint: "http://embeddings.llama-stack-rag.svc.cluster.local:8080/v2/models/embedding/infer"
+      type: "embedding"
+      resources:
+        limits:
+          memory: "4Gi"
+        requests:
+          memory: "2Gi"
+          cpu: "2"
+          
+  mcp-servers: {}
+
+# LLM Service Configuration (disabled - using OpenShift AI)
+llm-service:
+  enabled: false
+
+# Vector Database Configuration
+pgvector:
+  enabled: true
+  secret:
+    user: postgres
+    password: rag_password
+    dbname: rag_blueprint
+    host: pgvector
+    port: "5432"
+    
+  sampleFileUpload:
+    enabled: true
+    bucket: documents
+    urls: 
+    - https://raw.githubusercontent.com/rh-ai-quickstart/RAG/refs/heads/main/notebooks/Zippity_Zoo_Grand_Invention.pdf
+
+# LlamaStack Configuration for OpenShift AI
+llama-stack:
+  enabled: true
+  provider: "openshift-ai"
+  secrets:
+    TAVILY_SEARCH_API_KEY: "your-tavily-key-here"
+    RHOAI_MODEL_TOKEN: "your-rhoai-model-token"
+  environment:
+    - name: INFERENCE_MODEL
+      value: "llama-3-2-3b-rhoai"
+    - name: EMBEDDING_MODEL
+      value: "embedding-rhoai"
+    - name: RHOAI_NAMESPACE
+      value: "llama-stack-rag"
+    - name: MODEL_SERVING_PROTOCOL
+      value: "openai"  # OpenAI-compatible protocol
+
+# OpenShift AI Data Science Project Configuration
+rhoai:
+  enabled: true
+  project:
+    name: "llama-stack-rag"
+    displayName: "LlamaStack RAG System"
+    description: "Enterprise RAG system with OpenShift AI model serving"
+  
+  # Model serving configurations
+  inferenceServices:
+    - name: llama-3-2-3b
+      runtime: vllm-runtime
+      storageUri: "hf://meta-llama/Llama-3.2-3B-Instruct"
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+          memory: "8Gi"
+        requests:
+          nvidia.com/gpu: "1"
+          memory: "4Gi"
+      env:
+        - name: MAX_MODEL_LEN
+          value: "8192"
+        - name: TENSOR_PARALLEL_SIZE
+          value: "1"
+          
+    - name: embeddings
+      runtime: ovms-runtime
+      storageUri: "hf://sentence-transformers/all-MiniLM-L6-v2"
+      resources:
+        limits:
+          memory: "4Gi"
+        requests:
+          memory: "2Gi"
+          cpu: "2"
+
+# Ingestion Pipeline Configuration
+configure-pipeline:
+  enabled: true
+  provider: "openshift-ai"
+  minio:
+    secret:
+      user: minio_rag_user
+      password: minio_rag_password
+      host: minio
+      port: "9000"
+
+# MCP Servers
+mcp-servers:
+  enabled: true
+
+# OpenShift AI specific suggested questions
+suggestedQuestions:
+  rhoai-models-v1-0:
+    - "What models are available in OpenShift AI?"
+    - "How do I configure model serving resources?"
+    - "What are the GPU requirements for different models?"
+    - "How do I monitor model performance?"
+    
+  data-science-v1-0:
+    - "How do I access Jupyter notebooks?"
+    - "What data science pipelines are available?"
+    - "How do I manage model versions?"
+    - "Where can I find model serving logs?"
+
+# Enhanced Ingestion Pipeline with OpenShift AI Integration
+ingestion-pipeline:
+  enabled: true
+  provider: "openshift-ai"
+  serviceAccount:
+    create: true
+    name: rag-pipeline-rhoai
+    annotations:
+      opendatahub.io/managed: "true"
+      
+  # Data science pipeline integration
+  dataSciencePipelines:
+    enabled: true
+    namespace: "llama-stack-rag"
+    
+  pipelines:
+    # Enterprise documentation with RHOAI processing
+    enterprise-docs-rhoai:
+      enabled: true
+      source: URL
+      embedding_model: "embedding-rhoai"
+      name: "enterprise-docs-rhoai"
+      version: "1.0"
+      vector_store_name: "enterprise-docs-rhoai-v1-0"
+      url_config:
+        urls:
+          - "https://docs.company.com"
+          - "https://confluence.company.com/spaces/ENG/overview"
+        crawling:
+          enabled: true
+          max_depth: 3
+          max_pages: 1000
+          confluence:
+            base_url: "https://confluence.company.com"
+            username: "${CONFLUENCE_USERNAME}"
+            api_token: "${CONFLUENCE_API_TOKEN}"
+            include_attachments: true
+            
+    # GitHub repositories with RHOAI
+    github-docs-rhoai:
+      enabled: false
+      source: GITHUB
+      embedding_model: "embedding-rhoai"
+      name: "github-docs-rhoai"
+      version: "1.0"
+      vector_store_name: "github-docs-rhoai-v1-0"
+      GITHUB:
+        url: https://github.com/company/documentation.git
+        path: docs
+        token: "${GITHUB_TOKEN}"
+        branch: main
+
+# OpenShift AI Dashboard Integration
+dashboard:
+  enabled: true
+  route:
+    create: true
+    host: "rag-system.apps.cluster.example.com"
+  
+# Monitoring with OpenShift AI integration
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+    serviceMonitor: true
+  grafana:
+    enabled: true
+    dashboards:
+      - name: "RAG Model Performance"
+        configMap: "rag-grafana-dashboards"
+
+# RBAC for OpenShift AI integration
+rbac:
+  create: true
+  rules:
+    - apiGroups: ["serving.kserve.io"]
+      resources: ["inferenceservices", "trainedmodels"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["opendatahub.io"]
+      resources: ["datascienceprojects", "datasciencepipelineruns"]
+      verbs: ["get", "list", "watch", "create"]
+
+# Node selection for GPU workloads
+nodeSelector:
+  node-role.kubernetes.io/worker: ""
+  feature.node.kubernetes.io/pci-10de.present: "true"  # NVIDIA GPU
+
+# Tolerations for GPU nodes
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
+  - key: opendatahub.io/gpu
+    operator: Exists
+    effect: NoSchedule
+
+# Pod Security Standards
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+
+# Resources for the main application
+resources:
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
+  requests:
+    memory: "1Gi"
+    cpu: "500m"

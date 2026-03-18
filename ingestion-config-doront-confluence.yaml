@@ -1,0 +1,41 @@
+# Doront's Confluence Configuration
+# Ingestion config for MFS space
+
+llamastack:
+  base_url: "http://llamastack:8321"
+  
+vector_db:
+  embedding_model: "text-embedding-3-small"  # Using OpenAI embeddings
+  embedding_dimension: 1536
+  chunk_size_in_tokens: 512
+
+pipelines:
+  # MFS Space Documentation
+  mfs-docs:
+    enabled: true
+    name: "mfs-docs"
+    version: "1.0"
+    vector_store_name: "mfs-docs-v1-0"
+    source: URL
+    config:
+      urls:
+        # Your MFS space - will crawl the entire space
+        - "https://doront.atlassian.net/wiki/spaces/MFS/overview"
+        
+        # Target your specific page (corrected URL format)
+        - "https://doront.atlassian.net/wiki/spaces/MFS/pages/884737"
+        
+        # Alternative formats that should work:
+        # - "https://doront.atlassian.net/wiki/pages/viewpage.action?pageId=884737"
+      
+      crawl:
+        enabled: true
+        max_depth: 3          # How deep to crawl
+        same_domain_only: true
+        max_pages: 100        # Adjust based on your content volume
+        delay: 1.0            # Be respectful to Atlassian servers
+        
+        confluence:
+          base_url: "https://doront.atlassian.net"
+          username: "${CONFLUENCE_USERNAME}"
+          api_token: "${CONFLUENCE_API_TOKEN}"
