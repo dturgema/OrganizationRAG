@@ -1,0 +1,159 @@
+# Docker Compose for RAG with OpenAI (PC-Friendly Setup)
+# No local GPU or Ollama required - uses OpenAI API
+version: '3.8'
+
+services:
+  # PostgreSQL with PGVector for embeddings storage
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: rag-pgvector-openai
+    environment:
+      POSTGRES_DB: ragdb
+      POSTGRES_USER: raguser
+      POSTGRES_PASSWORD: ragpassword
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+  # LlamaStack configured for OpenAI
+  llamastack:
+    image: llamastack/distribution-openai:latest
+    container_name: rag-llamastack-openai
+    ports:
+      - "8321:8321"
+    environment:
+      # OpenAI Configuration
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      INFERENCE_MODEL: "${INFERENCE_MODEL:-gpt-4o-mini}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-text-embedding-3-small}"
+      
+      # Database connection
+      PGVECTOR_HOST: pgvector
+      PGVECTOR_PORT: 5432
+      PGVECTOR_DB: ragdb
+      PGVECTOR_USER: raguser
+      PGVECTOR_PASSWORD: ragpassword
+      
+      # Optional: Web search (if you have Tavily API key)
+      TAVILY_SEARCH_API_KEY: "${TAVILY_SEARCH_API_KEY:-}"
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    networks:
+      - rag-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8321/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # Enhanced Ingestion Service with Confluence + Web Crawling
+  rag-ingestion:
+    build:
+      context: .
+      dockerfile: ingestion-service/Containerfile.enhanced
+    container_name: rag-ingestion-openai
+    environment:
+      # Ingestion configuration
+      INGESTION_CONFIG: /config/ingestion-config.yaml
+      LOG_LEVEL: INFO
+      MAX_WORKERS: 4
+      
+      # Database and LlamaStack connection
+      PGVECTOR_HOST: pgvector
+      PGVECTOR_PORT: 5432
+      PGVECTOR_DB: ragdb
+      PGVECTOR_USER: raguser
+      PGVECTOR_PASSWORD: ragpassword
+      LLAMASTACK_URL: http://llamastack:8321
+      
+      # OpenAI configuration (for any direct API calls)
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      
+      # Confluence integration (optional)
+      CONFLUENCE_BASE_URL: "${CONFLUENCE_BASE_URL:-}"
+      CONFLUENCE_USERNAME: "${CONFLUENCE_USERNAME:-}"
+      CONFLUENCE_API_TOKEN: "${CONFLUENCE_API_TOKEN:-}"
+    volumes:
+      # Use the PC-friendly OpenAI configuration
+      - ./ingestion-config-pc-openai.yaml:/config/ingestion-config.yaml:ro
+      - ingestion_logs:/app/logs
+      - ingestion_temp:/app/temp
+    depends_on:
+      llamastack:
+        condition: service_healthy
+      pgvector:
+        condition: service_healthy
+    networks:
+      - rag-network
+    restart: "no"  # Run once for ingestion
+
+  # RAG UI (Streamlit frontend)
+  rag-ui:
+    build:
+      context: .
+      dockerfile: frontend/Containerfile
+    container_name: rag-ui-openai
+    ports:
+      - "8501:8501"
+    environment:
+      # LlamaStack connection
+      LLAMA_STACK_ENDPOINT: http://llamastack:8321
+      
+      # OpenAI configuration
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+      
+      # UI configuration
+      RAG_QUESTION_SUGGESTIONS: |
+        {
+          "engineering-space-full-v1-0": [
+            "What are our engineering best practices?",
+            "How do we handle code reviews?",
+            "What is our deployment process?",
+            "Where can I find API documentation?"
+          ],
+          "hr-knowledge-base-v1-0": [
+            "What are the vacation policies?",
+            "How do I submit expenses?",
+            "What benefits do we offer?",
+            "Where is the employee handbook?"
+          ],
+          "tech-docs-comprehensive-v1-0": [
+            "How do I authenticate with our API?",
+            "What are the system requirements?",
+            "How do I troubleshoot common issues?",
+            "Where can I find code examples?"
+          ]
+        }
+      
+      # Optional: Web search
+      TAVILY_SEARCH_API_KEY: "${TAVILY_SEARCH_API_KEY:-}"
+    depends_on:
+      - llamastack
+    networks:
+      - rag-network
+    restart: unless-stopped
+
+volumes:
+  pgvector_data:
+    driver: local
+  ingestion_logs:
+    driver: local
+  ingestion_temp:
+    driver: local
+
+networks:
+  rag-network:
+    driver: bridge

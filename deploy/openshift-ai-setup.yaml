@@ -1,0 +1,250 @@
+# OpenShift AI Setup Resources
+# Apply these resources before deploying the RAG system with OpenShift AI
+
+---
+# Data Science Project for RAG
+apiVersion: datasciencepipelinesapplications.opendatahub.io/v1alpha1
+kind: DataScienceProject
+metadata:
+  name: llama-stack-rag
+  labels:
+    app.kubernetes.io/name: llama-stack-rag
+    opendatahub.io/project-type: ai-application
+spec:
+  displayName: "LlamaStack RAG System"
+  description: "Enterprise RAG system with OpenShift AI model serving"
+
+---
+# Model serving runtime for vLLM
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: vllm-runtime
+  namespace: llama-stack-rag
+  labels:
+    app.kubernetes.io/name: vllm-runtime
+spec:
+  supportedModelFormats:
+    - name: pytorch
+      version: "1"
+      autoSelect: true
+  containers:
+    - name: kserve-container
+      image: quay.io/modh/vllm:0.4.2-ubi9
+      command: ["/bin/sh"]
+      args:
+        - -c
+        - 'python -m vllm.entrypoints.openai.api_server --model $(MODEL_NAME) --port 8080 --host 0.0.0.0 --tensor-parallel-size $(TENSOR_PARALLEL_SIZE) --max-model-len $(MAX_MODEL_LEN) --gpu-memory-utilization $(GPU_MEMORY_UTILIZATION)'
+      ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+      env:
+        - name: MODEL_NAME
+          value: "meta-llama/Llama-3.2-3B-Instruct"
+        - name: TENSOR_PARALLEL_SIZE
+          value: "1"
+        - name: MAX_MODEL_LEN
+          value: "8192"
+        - name: GPU_MEMORY_UTILIZATION
+          value: "0.85"
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+          memory: "8Gi"
+        requests:
+          nvidia.com/gpu: "1"
+          memory: "4Gi"
+          cpu: "2"
+      volumeMounts:
+        - name: shm
+          mountPath: /dev/shm
+  volumes:
+    - name: shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 2Gi
+
+---
+# Model serving runtime for OpenVINO (embeddings)
+apiVersion: serving.kserve.io/v1alpha1
+kind: ServingRuntime
+metadata:
+  name: ovms-runtime
+  namespace: llama-stack-rag
+  labels:
+    app.kubernetes.io/name: ovms-runtime
+spec:
+  supportedModelFormats:
+    - name: onnx
+      version: "1"
+    - name: tensorflow
+      version: "1"
+  containers:
+    - name: kserve-container
+      image: quay.io/modh/openvino_model_server:2024.0-ubi9
+      args:
+        - --model_name=$(MODEL_NAME)
+        - --port=8080
+        - --rest_port=8080
+        - --model_path=/mnt/models
+        - --file_system_poll_wait_seconds=0
+        - --grpc_bind_address=0.0.0.0
+        - --rest_bind_address=0.0.0.0
+      ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+      env:
+        - name: MODEL_NAME
+          value: "embedding"
+      resources:
+        limits:
+          memory: "4Gi"
+        requests:
+          memory: "2Gi"
+          cpu: "2"
+
+---
+# InferenceService for Llama model
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llama-3-2-3b
+  namespace: llama-stack-rag
+  labels:
+    app.kubernetes.io/name: llama-3-2-3b-inference
+spec:
+  predictor:
+    serviceAccountName: default-editor
+    model:
+      modelFormat:
+        name: pytorch
+      runtime: vllm-runtime
+      storage:
+        key: aws-connection-models
+        path: meta-llama/Llama-3.2-3B-Instruct
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+          memory: "8Gi"
+        requests:
+          nvidia.com/gpu: "1"
+          memory: "4Gi"
+          cpu: "2"
+
+---
+# InferenceService for embeddings
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: embeddings
+  namespace: llama-stack-rag
+  labels:
+    app.kubernetes.io/name: embeddings-inference
+spec:
+  predictor:
+    serviceAccountName: default-editor
+    model:
+      modelFormat:
+        name: onnx
+      runtime: ovms-runtime
+      storage:
+        key: aws-connection-models
+        path: sentence-transformers/all-MiniLM-L6-v2
+      resources:
+        limits:
+          memory: "4Gi"
+        requests:
+          memory: "2Gi"
+          cpu: "2"
+
+---
+# Secret for model storage (S3/MinIO)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-connection-models
+  namespace: llama-stack-rag
+  labels:
+    opendatahub.io/managed: 'true'
+  annotations:
+    opendatahub.io/connection-type: s3
+    openshift.io/display-name: Model Storage
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: "minio"
+  AWS_SECRET_ACCESS_KEY: "minio123"
+  AWS_S3_ENDPOINT: "http://minio.llama-stack-rag.svc.cluster.local:9000"
+  AWS_DEFAULT_REGION: "us-east-1"
+  AWS_S3_BUCKET: "models"
+
+---
+# ConfigMap for model endpoints
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rhoai-model-config
+  namespace: llama-stack-rag
+data:
+  model-endpoint: "http://llama-3-2-3b-predictor.llama-stack-rag.svc.cluster.local/v1"
+  embedding-endpoint: "http://embeddings-predictor.llama-stack-rag.svc.cluster.local/v2/models/embedding/infer"
+  
+---
+# Secret for model authentication
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rhoai-model-credentials
+  namespace: llama-stack-rag
+type: Opaque
+stringData:
+  auth-token: "dummy-token"  # Replace with actual token if needed
+
+---
+# ServiceMonitor for Prometheus monitoring
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rag-model-metrics
+  namespace: llama-stack-rag
+  labels:
+    app.kubernetes.io/name: rag-model-metrics
+spec:
+  selector:
+    matchLabels:
+      serving.kserve.io/inferenceservice: llama-3-2-3b
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+
+---
+# NetworkPolicy for OpenShift AI integration
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rhoai-model-serving
+  namespace: llama-stack-rag
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: rag
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: redhat-ods-applications
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+  egress:
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 8000

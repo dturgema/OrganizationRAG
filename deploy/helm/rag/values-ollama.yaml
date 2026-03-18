@@ -1,0 +1,237 @@
+# Ollama Provider Configuration for OpenShift/Kubernetes Deployment
+# Use this values file for self-hosted deployment with local models
+
+replicaCount: 1
+
+image:
+  repository: quay.io/rh-ai-quickstart/llamastack-dist-ui
+  pullPolicy: Always
+  tag: 0.2.33
+
+service:
+  type: ClusterIP
+  port: 8501
+
+serviceAccount:
+  create: false
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+env:
+  - name: LLAMA_STACK_ENDPOINT
+    value: 'http://llamastack:8321'
+
+volumes:
+  - emptyDir: {}
+    name: dot-streamlit
+
+volumeMounts:
+  - mountPath: /.streamlit
+    name: dot-streamlit
+
+# Local Model Configuration with Ollama
+global:
+  models:
+    # Llama Models via Ollama
+    llama-3-2-3b-instruct:
+      id: meta-llama/Llama-3.2-3B-Instruct
+      enabled: true
+      provider: "ollama"
+      device: "gpu"  # Options: "cpu", "gpu", "hpu", "xeon"
+      accelerators: "1"
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+          memory: "8Gi"
+        requests:
+          memory: "4Gi"
+          cpu: "2"
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: Exists
+          effect: NoSchedule
+      args:
+        - --enable-auto-tool-choice
+        - --chat-template
+        - /vllm-workspace/examples/tool_chat_template_llama3.2_json.jinja
+        - --tool-call-parser
+        - llama3_json
+        - --max-model-len
+        - "30444"
+        
+    llama-3-1-8b-instruct:
+      id: meta-llama/Llama-3.1-8B-Instruct
+      enabled: false  # Enable for better quality
+      provider: "ollama"
+      device: "gpu"
+      accelerators: "1"
+      resources:
+        limits:
+          nvidia.com/gpu: "1" 
+          memory: "16Gi"
+        requests:
+          memory: "8Gi"
+          cpu: "4"
+      args:
+        - --max-model-len
+        - "14336"
+        - --max-num-seqs
+        - "32"
+        - --enable-auto-tool-choice
+        
+    # Code-specific model
+    codellama-7b-instruct:
+      id: codellama/CodeLlama-7b-Instruct-hf
+      enabled: false
+      provider: "ollama"
+      device: "gpu"
+      accelerators: "1"
+      
+    # Embedding models
+    all-minilm-l6-v2:
+      id: sentence-transformers/all-MiniLM-L6-v2
+      enabled: true
+      provider: "ollama"
+      type: "embedding"
+      device: "cpu"  # Embeddings can run on CPU
+      
+  mcp-servers: {}
+
+# LLM Service Configuration (enabled for local models)
+llm-service:
+  enabled: true
+  secret:
+    hf_token: ""  # Hugging Face token for model downloads
+    enabled: true
+    
+# Vector Database Configuration
+pgvector:
+  enabled: true
+  secret:
+    user: postgres
+    password: rag_password
+    dbname: rag_blueprint
+    host: pgvector
+    port: "5432"
+    
+  sampleFileUpload:
+    enabled: true
+    bucket: documents
+    urls: 
+    - https://raw.githubusercontent.com/rh-ai-quickstart/RAG/refs/heads/main/notebooks/Zippity_Zoo_Grand_Invention.pdf
+    - https://raw.githubusercontent.com/rh-ai-quickstart/RAG/refs/heads/main/notebooks/Zippity_Zoo_and_the_Town_of_Tumble_Town.pdf
+
+# LlamaStack Configuration for Ollama
+llama-stack:
+  enabled: true
+  provider: "ollama"
+  secrets:
+    TAVILY_SEARCH_API_KEY: "your-tavily-key-here"  # Optional
+  environment:
+    - name: INFERENCE_MODEL
+      value: "llama3.2:3b-instruct"
+    - name: EMBEDDING_MODEL
+      value: "all-MiniLM-L6-v2"
+    - name: OLLAMA_URL
+      value: "http://ollama:11434"
+      
+# Ingestion Pipeline Configuration
+configure-pipeline:
+  enabled: true
+  provider: "ollama"
+  minio:
+    secret:
+      user: minio_rag_user
+      password: minio_rag_password
+      host: minio
+      port: "9000"
+  sampleFileUpload:
+    enabled: true
+    bucket: documents
+
+# MCP Servers
+mcp-servers:
+  enabled: true
+
+# Suggested Questions for Local Models
+suggestedQuestions:
+  local-docs-v1-0:
+    - "What models are available locally?"
+    - "How do I optimize performance on GPU?"
+    - "What are the hardware requirements?"
+    - "How do I add new models to Ollama?"
+    
+  engineering-v1-0:
+    - "What are our coding standards?"
+    - "How do I set up the development environment?"
+    - "What is our testing strategy?"
+    - "Where can I find architecture documentation?"
+
+# Enhanced Ingestion Pipeline 
+ingestion-pipeline:
+  enabled: true
+  provider: "ollama"
+  serviceAccount:
+    create: true
+    name: rag-pipeline-ollama
+    
+  pipelines:
+    # Internal Company Documentation
+    company-docs:
+      enabled: true
+      source: URL
+      embedding_model: "all-MiniLM-L6-v2"
+      name: "company-docs"
+      version: "1.0"
+      vector_store_name: "company-docs-v1-0"
+      url_config:
+        urls:
+          - "https://internal-docs.company.com"
+          - "https://wiki.company.com"
+        crawling:
+          enabled: true
+          max_depth: 3
+          max_pages: 1000
+          
+    # GitHub Internal Repositories
+    internal-repos:
+      enabled: false  # Enable after configuration
+      source: GITHUB
+      embedding_model: "all-MiniLM-L6-v2"
+      name: "internal-repos"
+      version: "1.0"
+      vector_store_name: "internal-repos-v1-0"
+      GITHUB:
+        url: https://github.com/company/internal-docs.git
+        path: documentation
+        token: "${GITHUB_TOKEN}"
+        branch: main
+        
+# Resource Quotas and Limits
+resources:
+  limits:
+    nvidia.com/gpu: "2"  # Adjust based on available GPUs
+    memory: "32Gi"
+    cpu: "8"
+  requests:
+    nvidia.com/gpu: "1"
+    memory: "16Gi"
+    cpu: "4"
+
+# Node Selection for GPU nodes
+nodeSelector:
+  node-type: gpu
+
+# Tolerations for GPU nodes
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule

@@ -1,0 +1,223 @@
+# OpenAI Provider Configuration for OpenShift/Kubernetes Deployment
+# Use this values file for enterprise deployment with OpenAI
+
+replicaCount: 1
+
+image:
+  repository: quay.io/rh-ai-quickstart/llamastack-dist-ui
+  pullPolicy: Always
+  tag: 0.2.33
+
+service:
+  type: ClusterIP
+  port: 8501
+
+serviceAccount:
+  create: false
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+env:
+  - name: LLAMA_STACK_ENDPOINT
+    value: 'http://llamastack:8321'
+  - name: OPENAI_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: openai-credentials
+        key: api-key
+
+volumes:
+  - emptyDir: {}
+    name: dot-streamlit
+
+volumeMounts:
+  - mountPath: /.streamlit
+    name: dot-streamlit
+
+# OpenAI Model Configuration
+global:
+  models:
+    # OpenAI GPT Models
+    gpt-4o-mini:
+      url: "https://api.openai.com/v1"
+      apiToken: "${OPENAI_API_KEY}"
+      id: "gpt-4o-mini"
+      enabled: true
+      provider: "openai"
+      type: "chat"
+      
+    gpt-4o:
+      url: "https://api.openai.com/v1"
+      apiToken: "${OPENAI_API_KEY}"
+      id: "gpt-4o"
+      enabled: false  # Enable for higher quality, higher cost
+      provider: "openai"
+      type: "chat"
+      
+    gpt-3-5-turbo:
+      url: "https://api.openai.com/v1"
+      apiToken: "${OPENAI_API_KEY}"
+      id: "gpt-3.5-turbo"
+      enabled: false  # Budget option
+      provider: "openai"
+      type: "chat"
+      
+    # OpenAI Embedding Models
+    text-embedding-3-small:
+      url: "https://api.openai.com/v1"
+      apiToken: "${OPENAI_API_KEY}"
+      id: "text-embedding-3-small"
+      enabled: true
+      provider: "openai"
+      type: "embedding"
+      
+    text-embedding-3-large:
+      url: "https://api.openai.com/v1"
+      apiToken: "${OPENAI_API_KEY}"
+      id: "text-embedding-3-large"
+      enabled: false  # Higher quality, more expensive
+      provider: "openai"
+      type: "embedding"
+      
+  mcp-servers: {}
+
+# LLM Service Configuration (disabled for OpenAI)
+llm-service:
+  enabled: false  # Not needed for OpenAI
+  
+# Vector Database Configuration  
+pgvector:
+  enabled: true
+  secret:
+    user: postgres
+    password: rag_password
+    dbname: rag_blueprint
+    host: pgvector
+    port: "5432"
+    
+  # Upload sample files to test the system
+  sampleFileUpload:
+    enabled: true
+    bucket: documents
+    urls: 
+    - https://raw.githubusercontent.com/rh-ai-quickstart/RAG/refs/heads/main/notebooks/Zippity_Zoo_Grand_Invention.pdf
+    - https://raw.githubusercontent.com/rh-ai-quickstart/RAG/refs/heads/main/notebooks/Zippity_Zoo_and_the_Town_of_Tumble_Town.pdf
+
+# LlamaStack Configuration for OpenAI
+llama-stack:
+  enabled: true
+  provider: "openai"
+  secrets:
+    OPENAI_API_KEY: "your-openai-api-key-here"
+    TAVILY_SEARCH_API_KEY: "your-tavily-key-here"  # Optional web search
+  environment:
+    - name: INFERENCE_MODEL
+      value: "gpt-4o-mini"
+    - name: EMBEDDING_MODEL  
+      value: "text-embedding-3-small"
+    - name: OPENAI_API_BASE
+      value: "https://api.openai.com/v1"
+
+# Ingestion Pipeline Configuration
+configure-pipeline:
+  enabled: true
+  provider: "openai"
+  minio:
+    secret:
+      user: minio_rag_user
+      password: minio_rag_password
+      host: minio
+      port: "9000"
+  sampleFileUpload:
+    enabled: true
+    bucket: documents
+    urls: 
+    - https://raw.githubusercontent.com/rh-ai-quickstart/RAG/refs/heads/main/notebooks/Zippity_Zoo_Grand_Invention.pdf
+
+# MCP Servers (Model Control Protocol)
+mcp-servers:
+  enabled: true
+
+# Suggested Questions Configuration
+suggestedQuestions:
+  openai-docs-v1-0:
+    - "How do I use OpenAI's API effectively?"
+    - "What are the rate limits for different models?"
+    - "How do I optimize costs with OpenAI?"
+    - "What's the difference between GPT-4o and GPT-4o-mini?"
+    
+  company-kb-v1-0:
+    - "What is our AI usage policy?"
+    - "How do we handle sensitive data with external AI providers?"
+    - "What are our approved AI tools?"
+    - "How do I get access to company AI resources?"
+
+# Enhanced Ingestion Pipeline with Confluence Support
+ingestion-pipeline:
+  enabled: true
+  provider: "openai"
+  serviceAccount:
+    create: true
+    name: rag-pipeline-openai
+    
+  pipelines:
+    # Company Confluence Documentation  
+    company-confluence:
+      enabled: false  # Enable after configuring Confluence credentials
+      source: URL
+      embedding_model: "text-embedding-3-small"
+      name: "company-confluence"
+      version: "1.0"
+      vector_store_name: "company-confluence-v1-0"
+      url_config:
+        urls:
+          - "https://company.atlassian.net/wiki/spaces/ENG/overview"
+          - "https://company.atlassian.net/wiki/spaces/PROD/overview"
+        crawling:
+          enabled: true
+          max_depth: 3
+          max_pages: 500
+          confluence:
+            base_url: "https://company.atlassian.net"
+            username: "${CONFLUENCE_USERNAME}"
+            api_token: "${CONFLUENCE_API_TOKEN}"
+            include_attachments: true
+            
+    # External Documentation
+    external-docs:
+      enabled: true
+      source: URL
+      embedding_model: "text-embedding-3-small"
+      name: "external-docs"
+      version: "1.0"
+      vector_store_name: "external-docs-v1-0"
+      url_config:
+        urls:
+          - "https://docs.openshift.com/"
+          - "https://kubernetes.io/docs/"
+        crawling:
+          enabled: true
+          max_depth: 2
+          max_pages: 200
+          
+    # GitHub Repository Documentation
+    github-docs:
+      enabled: false  # Enable after configuring GitHub token
+      source: GITHUB
+      embedding_model: "text-embedding-3-small"
+      name: "github-docs"
+      version: "1.0"
+      vector_store_name: "github-docs-v1-0"
+      GITHUB:
+        url: https://github.com/your-org/documentation.git
+        path: docs
+        token: "${GITHUB_TOKEN}"
+        branch: main
