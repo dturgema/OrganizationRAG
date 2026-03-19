@@ -1,0 +1,131 @@
+---
+description: Security best practices for sensitive data and credentials
+alwaysApply: true
+---
+
+# Security Best Practices
+
+Enforce security-first coding practices to protect sensitive data and credentials.
+
+## 🔒 Secret Management
+
+### Never Commit Secrets
+```python
+# ❌ NEVER DO THIS
+api_key = "sk-proj-real-api-key-here"  # This will be visible in git history!
+
+# ✅ ALWAYS DO THIS
+api_key = os.getenv('API_KEY')
+if not api_key:
+    raise ValueError("API_KEY environment variable is required")
+```
+
+### Validate Environment Variables
+```python
+# ✅ GOOD - Fail fast if required secrets are missing
+required_env_vars = ['OPENAI_API_KEY', 'DATABASE_URL']
+missing_vars = [var for var in required_env_vars if not os.getenv(var)]
+if missing_vars:
+    raise ValueError(f"Missing required environment variables: {missing_vars}")
+```
+
+## 🚫 .gitignore Protection
+
+Ensure these patterns are in `.gitignore`:
+```gitignore
+# Environment files
+.env
+.env.local
+.env.production
+*.env
+
+# Credentials and keys
+*.key
+*.pem
+credentials.json
+secrets.yaml
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Log files that might contain sensitive data
+*.log
+logs/
+```
+
+## 🔍 Input Validation
+
+### SQL Injection Prevention
+```python
+# ❌ BAD - SQL injection vulnerable
+cursor.execute(f"SELECT * FROM users WHERE id = {user_id}")
+
+# ✅ GOOD - Parameterized queries
+cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+```
+
+### Path Traversal Prevention
+```python
+# ❌ BAD - Path traversal vulnerable
+file_path = f"/uploads/{filename}"
+
+# ✅ GOOD - Validate and sanitize paths
+import os.path
+filename = os.path.basename(filename)  # Remove any path components
+if '..' in filename or filename.startswith('/'):
+    raise ValueError("Invalid filename")
+```
+
+## 🛡️ Error Handling
+
+### Don't Leak Sensitive Information
+```python
+# ❌ BAD - Might expose database structure
+except Exception as e:
+    return {"error": str(e)}
+
+# ✅ GOOD - Generic error messages
+except DatabaseError:
+    logger.error("Database query failed", exc_info=True)
+    return {"error": "An internal error occurred"}
+```
+
+## 📝 Logging Security
+
+### Sanitize Log Output
+```python
+# ❌ BAD - API key in logs
+logger.info(f"Making request with key: {api_key}")
+
+# ✅ GOOD - Masked sensitive data
+logger.info(f"Making request with key: {api_key[:8]}...")
+```
+
+## 🔐 Security Checklist
+
+- [ ] No hardcoded credentials in code
+- [ ] All secrets use environment variables
+- [ ] `.env` files are in `.gitignore`
+- [ ] Required environment variables are validated
+- [ ] SQL queries use parameterization
+- [ ] File paths are validated
+- [ ] Error messages don't leak information
+- [ ] Logging doesn't expose secrets
+- [ ] Dependencies are regularly updated
+
+## ⚡ Quick Security Scan Commands
+
+```bash
+# Check for potential secrets in code
+grep -r "api_key\|password\|secret" --exclude-dir=.git .
+
+# Check for hardcoded URLs
+grep -r "http\|localhost" --exclude-dir=.git --include="*.py" .
+
+# Verify .env is gitignored  
+git check-ignore .env
+```
+
+Following these practices protects your application and user data from common security vulnerabilities.

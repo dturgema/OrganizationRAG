@@ -1,0 +1,162 @@
+---
+description: Prevent hardcoded values and promote configuration-driven development
+alwaysApply: true
+---
+
+# No Hardcoded Values Rule
+
+Never use hardcoded values in code. Always use configuration, environment variables, constants, or parameters.
+
+## ❌ Prohibited Hardcoded Values
+
+### API Keys & Secrets
+```python
+# ❌ BAD
+api_key = "sk-proj-ABCdef123..."
+client = OpenAI(api_key="your-secret-key-here")
+
+# ✅ GOOD
+api_key = os.getenv('OPENAI_API_KEY')
+client = OpenAI(api_key=api_key)
+```
+
+### URLs & Endpoints
+```python
+# ❌ BAD
+response = requests.get("https://api.example.com/users")
+db_host = "localhost:5432"
+
+# ✅ GOOD
+base_url = os.getenv('API_BASE_URL', 'https://api.example.com')
+response = requests.get(f"{base_url}/users")
+db_host = os.getenv('POSTGRES_HOST', 'localhost')
+```
+
+### Database Connections
+```python
+# ❌ BAD
+conn = psycopg2.connect(
+    host="localhost",
+    port=5432,
+    database="mydb",
+    user="admin",
+    password="password123"
+)
+
+# ✅ GOOD
+DB_CONFIG = {
+    'host': os.getenv('POSTGRES_HOST', 'localhost'),
+    'port': int(os.getenv('POSTGRES_PORT', 5432)),
+    'database': os.getenv('POSTGRES_DB', 'mydb'),
+    'user': os.getenv('POSTGRES_USER', 'admin'),
+    'password': os.getenv('POSTGRES_PASSWORD')
+}
+conn = psycopg2.connect(**DB_CONFIG)
+```
+
+### Magic Numbers
+```python
+# ❌ BAD
+if len(results) > 10:  # Why 10?
+    time.sleep(5)  # Why 5 seconds?
+
+# ✅ GOOD
+MAX_RESULTS = int(os.getenv('MAX_RESULTS', 10))
+RETRY_DELAY_SECONDS = int(os.getenv('RETRY_DELAY', 5))
+
+if len(results) > MAX_RESULTS:
+    time.sleep(RETRY_DELAY_SECONDS)
+```
+
+### File Paths
+```python
+# ❌ BAD
+with open("/tmp/data.json", "r") as f:
+    data = json.load(f)
+
+# ✅ GOOD
+data_file = os.getenv('DATA_FILE_PATH', '/tmp/data.json')
+with open(data_file, "r") as f:
+    data = json.load(f)
+```
+
+### Model Names & Versions
+```python
+# ❌ BAD
+model = "gpt-4o-mini"
+embedding_model = "text-embedding-ada-002"
+
+# ✅ GOOD
+model = os.getenv('INFERENCE_MODEL', 'gpt-4o-mini')
+embedding_model = os.getenv('EMBEDDING_MODEL', 'text-embedding-ada-002')
+```
+
+## ✅ Approved Approaches
+
+### Environment Variables
+- Use `os.getenv()` with sensible defaults
+- Document required environment variables
+- Use `.env` files for local development
+
+### Configuration Files
+```python
+# config.py
+import os
+
+class Config:
+    OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+    DATABASE_URL = os.getenv('DATABASE_URL')
+    DEBUG = os.getenv('DEBUG', 'False').lower() == 'true'
+```
+
+### Constants Module
+```python
+# constants.py
+DEFAULT_TIMEOUT = 30
+MAX_RETRIES = 3
+CHUNK_SIZE = 1000
+```
+
+### Function Parameters
+```python
+# ❌ BAD
+def chunk_content(content):
+    chunk_size = 1000  # Hardcoded
+    
+# ✅ GOOD
+def chunk_content(content, chunk_size=1000):
+    # Configurable with sensible default
+```
+
+## 🛠️ Implementation Guidelines
+
+1. **Environment Variables First**: Use `os.getenv()` for all external configuration
+2. **Sensible Defaults**: Provide fallback values for non-critical settings
+3. **Constants Module**: Create dedicated files for application constants
+4. **Configuration Classes**: Use structured configuration objects
+5. **Documentation**: Document all required environment variables
+
+## 🔍 Code Review Checklist
+
+- [ ] No API keys or secrets in code
+- [ ] No hardcoded URLs or endpoints  
+- [ ] No magic numbers without explanation
+- [ ] No hardcoded file paths
+- [ ] All configuration uses environment variables
+- [ ] Sensible defaults provided where appropriate
+- [ ] Environment variables documented
+
+## 📋 Environment Documentation
+
+Always maintain a `.env.example` file showing required variables:
+
+```bash
+# .env.example
+OPENAI_API_KEY=your-openai-api-key
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=ragdb
+INFERENCE_MODEL=gpt-4o-mini
+```
+
+This rule ensures maintainable, secure, and flexible code that adapts to different environments without code changes.
