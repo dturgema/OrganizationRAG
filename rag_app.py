@@ -89,14 +89,12 @@ def generate_response(query: str, context: str, client) -> str:
         
         CRITICAL INSTRUCTIONS:
         1. Only answer based on what is EXPLICITLY stated in the provided context
-        2. Do NOT conflate or mix different types of information (e.g., order statuses ≠ inventory statuses)
-        3. If the user asks about specific values/statuses/options and they are NOT found in the context, clearly state: "The provided documents do not contain information about [specific topic]"
-        4. Be especially careful to distinguish between:
-           - Order statuses vs Inventory statuses vs Configuration statuses
-           - Different entity types and their respective attributes
-        5. If you see related but different information, acknowledge it but don't substitute it for what was asked
+        2. Do NOT conflate or mix different types of information - be precise about what the context actually contains
+        3. If the user asks about specific information that is NOT found in the context, clearly state: "The provided documents do not contain information about [specific topic]"
+        4. Be careful to distinguish between different entity types and their respective attributes
+        5. If you see related but different information, acknowledge what you found but don't substitute it for what was asked
         
-        Example: If asked about "inventory statuses" but only "order statuses" are in context, say: "The documents contain order status information (Open, Closed, Draft) but do not specify inventory status values."
+        Provide accurate, helpful responses based on the provided context. If the information isn't in the context, say so clearly.
         
         # Analyze context relevance for better accuracy
         context_analysis = f"""
