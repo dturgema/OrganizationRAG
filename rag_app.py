@@ -33,7 +33,6 @@ def get_db_connection():
         st.error(f"Database connection failed: {e}")
         return None
 
-@st.cache_data(show_spinner=False)
 def search_documents(query: str, client, db, limit: int = 10) -> List[Dict[str, Any]]:
     """Search for relevant documents using vector similarity"""
     try:
