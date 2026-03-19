@@ -1,0 +1,73 @@
+version: '3.8'
+
+networks:
+  rag-network:
+    name: rag_rag-network
+
+services:
+  # PostgreSQL with PGVector for embeddings
+  pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: rag-pgvector-openai
+    environment:
+      POSTGRES_DB: ragdb
+      POSTGRES_USER: raguser
+      POSTGRES_PASSWORD: ragpassword
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    networks:
+      - rag-network
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RAG UI with Streamlit
+  rag-ui:
+    image: python:3.12-slim
+    container_name: rag-ui-openai
+    ports:
+      - "8501:8501"
+    networks:
+      - rag-network
+    volumes:
+      - ./rag_app.py:/app/rag_app.py:ro
+    environment:
+      # Database connection
+      - POSTGRES_HOST=rag-pgvector-openai
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=ragdb
+      - POSTGRES_USER=raguser
+      - POSTGRES_PASSWORD=ragpassword
+      
+      # OpenAI configuration
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - INFERENCE_MODEL=${INFERENCE_MODEL:-gpt-4o-mini}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-ada-002}
+      
+      # Optional: Confluence settings
+      - CONFLUENCE_USERNAME=${CONFLUENCE_USERNAME}
+      - CONFLUENCE_API_TOKEN=${CONFLUENCE_API_TOKEN}
+    depends_on:
+      pgvector:
+        condition: service_healthy
+    working_dir: /app
+    command: >
+      sh -c "
+        echo 'Installing dependencies...' &&
+        pip install --quiet streamlit psycopg2-binary openai beautifulsoup4 lxml &&
+        echo 'Starting Streamlit RAG UI...' &&
+        streamlit run rag_app.py --server.port=8501 --server.address=0.0.0.0
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  pgvector_data:
