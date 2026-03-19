@@ -94,7 +94,7 @@ def generate_response(query: str, context: str, client) -> str:
         4. Be careful to distinguish between different entity types and their respective attributes
         5. If you see related but different information, acknowledge what you found but don't substitute it for what was asked
         
-        Provide accurate, helpful responses based on the provided context. If the information isn't in the context, say so clearly.
+        Provide accurate, helpful responses based on the provided context. If the information isn't in the context, say so clearly."""
         
         # Analyze context relevance for better accuracy
         context_analysis = f"""
