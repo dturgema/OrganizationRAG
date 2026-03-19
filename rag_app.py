@@ -87,13 +87,35 @@ def generate_response(query: str, context: str, client) -> str:
         - Inventory management and item validation
         - System architecture and integrations
         
-        Provide accurate, helpful responses based on the provided context. If the information isn't in the context, say so clearly."""
+        CRITICAL INSTRUCTIONS:
+        1. Only answer based on what is EXPLICITLY stated in the provided context
+        2. Do NOT conflate or mix different types of information (e.g., order statuses ≠ inventory statuses)
+        3. If the user asks about specific values/statuses/options and they are NOT found in the context, clearly state: "The provided documents do not contain information about [specific topic]"
+        4. Be especially careful to distinguish between:
+           - Order statuses vs Inventory statuses vs Configuration statuses
+           - Different entity types and their respective attributes
+        5. If you see related but different information, acknowledge it but don't substitute it for what was asked
+        
+        Example: If asked about "inventory statuses" but only "order statuses" are in context, say: "The documents contain order status information (Open, Closed, Draft) but do not specify inventory status values."
+        
+        # Analyze context relevance for better accuracy
+        context_analysis = f"""
+        QUERY: {query}
+        CONTEXT: {context}
+        
+        Please analyze if the provided context actually contains specific information to answer the query. 
+        Pay special attention to:
+        - Does the context contain the exact type of information requested?
+        - Are there similar but different concepts that might be confused?
+        - If asking about specific values/options, are those values actually present?
+        
+        Then provide your answer following the critical instructions."""
         
         response = client.chat.completions.create(
             model=os.getenv('INFERENCE_MODEL', 'gpt-4o-mini'),
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Context: {context}\n\nQuestion: {query}"}
+                {"role": "user", "content": context_analysis}
             ],
             temperature=0.1,
             max_tokens=1500
